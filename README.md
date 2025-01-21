@@ -12,3 +12,6 @@ Optional "Enter" keypress after each input.
 System tray icon for easy monitoring and program control.
 Error handling with notifications for missing configuration or serial connection issues.
 The program utilizes libraries like pyautogui for keyboard simulation, pyperclip for clipboard management, serial for serial communication, and pystray for the system tray icon functionality.
+
+The key feature of barcode readers, especially when reading QR codes, is their ability to expand at high speed.
+One of the most useful features is that the output speed when retrieving strings containing Japanese characters,Chinese characters, Korean characters from QR codes is significantly faster than that of other tools.

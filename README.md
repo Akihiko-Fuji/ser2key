@@ -6,7 +6,7 @@
 ## ✨ Features  
 - 🔧 **Configurable Serial Communication** – Adjust settings via `config.ini` (baud rate, parity, timeout, etc.).  
 - ⌨️ **Clipboard-based Keystroke Simulation** – Pastes received data as keyboard input.  
-- 🚀 **Optimized for Speed** – Outperforms existing tools, especially with **Japanese, Chinese, and Korean characters**.  
+- 🚀 **Designed for High-Speed Data Input"** – Outperforms existing tools, especially with **Japanese, Chinese, and Korean characters**.  
 - 🖥️ **System Tray Integration** – Quick access and status monitoring.  
 
 

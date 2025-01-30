@@ -14,7 +14,7 @@ The program utilizes libraries like pyautogui for keyboard simulation, pyperclip
 # Program Development Targets:
 The key feature of barcode readers, especially when reading QR codes, is their ability to convert at ultra high speed.
 One of the most useful features is that the output speed when retrieving strings containing Japanese characters, Japanese half-width kana character, Chinese characters, Korean characters from QR codes is significantly faster than that of other tools.
-The specific performance comparison target is [Keyence's AutoID Keyboard Wedge](https://www.keyence.co.jp/support/codereader/blsrus/soft/#d12), which operates about 10 times faster in conversion than the AutoID Keyboard Wedge.
+The specific performance comparison target is [Keyence AutoID Keyboard Wedge](https://www.keyence.co.jp/support/codereader/blsrus/soft/#d12), which operates about 10x faster in conversion than the AutoID Keyboard Wedge.
 
 # Operating environment:
 The program has been tested on Windows. Because the program is resident in the task tray, etc., the program needs to be modified when used on other operating systems.

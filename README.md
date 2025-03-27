@@ -20,12 +20,12 @@ Designed with **barcode & QR code readers** in mind, `ser2key` delivers superior
 
 ## 💻 Supported Platforms  
 ✅ **Windows** (tested) – Runs in the system tray.  
-⚠️ **Other OS** – Requires modification due to system tray dependencies.  
+⚠️ **Other OS** – Requires modification due to system tray dependencies.  and In addition, the serial communication process validation is for Windows OS and needs to be corrected.
 🔌 **Compatible with all serial devices** – Recognized as a COM port by Windows, including RS-232C, USB serial adapters, and Bluetooth SPP mode. 
 
 ---
 
-## Update
+## Update history
 1.2 Revised entire code, added validation checks for anomalous values in configuration files, etc.
 
 1.1 Enhanced Error Handling

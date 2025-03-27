@@ -27,7 +27,9 @@ Designed with **barcode & QR code readers** in mind, `ser2key` delivers superior
 
 ## Update
 1.2 Revised entire code, added validation checks for anomalous values in configuration files, etc.
+
 1.1 Enhanced Error Handling
+
 1.0 Release Version
 
 ---

@@ -34,6 +34,9 @@ import os
 import logging
 from logging.handlers import RotatingFileHandler
 from contextlib import contextmanager
+import codecs
+import re
+from datetime import datetime
 
 
 if os.name != 'nt':
@@ -46,6 +49,12 @@ ICON_FILE = 'f.png'
 APP_NAME = 'ser2key'
 
 
+def _get_executable_directory():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def _get_storage_directory():
     base_dir = os.getenv('APPDATA')
     if not base_dir:
@@ -53,8 +62,12 @@ def _get_storage_directory():
     return os.path.join(base_dir, APP_NAME)
 
 
+APP_DIR = _get_executable_directory()
 STORAGE_DIR = _get_storage_directory()
-CONFIG_FILE = os.path.join(STORAGE_DIR, 'config.ini')
+CONFIG_CANDIDATE_PATHS = [
+    os.path.join(APP_DIR, 'config.ini'),
+    os.path.join(STORAGE_DIR, 'config.ini'),
+]
 LOG_FILE = os.path.join(STORAGE_DIR, 'ser2key.log')
 
 
@@ -65,6 +78,14 @@ def ensure_storage_directory():
         raise RuntimeError(
             f'設定保存用ディレクトリ {STORAGE_DIR} を作成できません: {exc}'
         ) from exc
+
+
+DATETIME_TOKEN_PATTERN = re.compile(r'\{(DATE|TIME|DATETIME)(?::([^}]*))?\}')
+DEFAULT_DATETIME_FORMATS = {
+    'DATE': '%Y-%m-%d',
+    'TIME': '%H:%M:%S',
+    'DATETIME': '%Y-%m-%d %H:%M:%S',
+}
 
 
 RECONNECT_DELAY = 5     # 再接続までの待機時間（秒）
@@ -208,12 +229,21 @@ class ClipboardError(Exception):
 @contextmanager
 def open_clipboard():
     """クリップボードを安全に開くためのコンテキストマネージャ"""
-    if not user32.OpenClipboard(None):
+    deadline = time.time() + CLIPBOARD_TIMEOUT
+    opened = False
+    while time.time() < deadline:
+        if user32.OpenClipboard(None):
+            opened = True
+            break
+        time.sleep(0.05)
+
+    if not opened:
         raise ClipboardError('クリップボードを開けませんでした')
     try:
         yield
     finally:
-        user32.CloseClipboard()
+        if opened:
+            user32.CloseClipboard()
 
 
 def get_clipboard_text():
@@ -335,6 +365,70 @@ class SerialKeyboardEmulator:
         self.available_ports = []
         self._config_parser = None
         self._reconnect_event = threading.Event()
+        self.config_path = None
+        self.output_config = {
+            'header_template': '',
+            'footer_template': '',
+        }
+        self._cleanup_event = threading.Event()
+
+    def _resolve_config_path(self):
+        for path in CONFIG_CANDIDATE_PATHS:
+            if os.path.exists(path):
+                if path.endswith('config.ini') and path != CONFIG_CANDIDATE_PATHS[0]:
+                    self.logger.info(f"設定ファイルを互換パスから読み込みます: {path}")
+                return path
+        return CONFIG_CANDIDATE_PATHS[0]
+
+    def _persist_config(self):
+        if not self._config_parser or not self.config_path:
+            return
+
+        directory = os.path.dirname(self.config_path)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+
+        with open(self.config_path, 'w', encoding='utf-8') as f:
+            self._config_parser.write(f)
+
+    def _decode_template(self, text, field_name):
+        if not text:
+            return ''
+        try:
+            return codecs.decode(text.encode('utf-8'), 'unicode_escape')
+        except Exception as exc:
+            self.logger.warning(
+                f"[output] セクションの {field_name} のエスケープシーケンス解釈に失敗しました: {exc}"
+            )
+            return text
+
+    def _render_template(self, template, now):
+        if not template:
+            return ''
+
+        def replace(match):
+            token = match.group(1)
+            fmt = match.group(2) or DEFAULT_DATETIME_FORMATS[token]
+            try:
+                return now.strftime(fmt)
+            except ValueError as exc:
+                self.logger.warning(
+                    f"[output] {token} の書式 '{fmt}' が不正なため置換できませんでした: {exc}"
+                )
+                return match.group(0)
+
+        return DATETIME_TOKEN_PATTERN.sub(replace, template)
+
+    def _apply_output_templates(self, payload):
+        if payload is None:
+            return ''
+
+        now = datetime.now()
+        header_template = self.output_config.get('header_template', '') if self.output_config else ''
+        footer_template = self.output_config.get('footer_template', '') if self.output_config else ''
+        header = self._render_template(header_template, now)
+        footer = self._render_template(footer_template, now)
+        return f"{header}{payload}{footer}"
 
     def _wait_for_stop_or_reconnect(self, timeout):
         """終了要求または再接続要求を監視しながら待機"""
@@ -350,17 +444,26 @@ class SerialKeyboardEmulator:
     def cleanup(self):
         """リソースの解放処理"""
         self.is_running = False
-        self.logger.info("アプリケーションのクリーンアップを実行")
         self._reconnect_event.set()
+
+        if self._cleanup_event.is_set():
+            return
+
+        self._cleanup_event.set()
+        self.logger.info("アプリケーションのクリーンアップを実行")
+        icon = self.tray_icon
+        if icon:
+            try:
+                icon.visible = False
+            except Exception:
+                pass
+            try:
+                icon.stop()
+            except Exception as exc:
+                self.logger.debug(f"トレイアイコン停止時の例外: {exc}")
 
     def create_default_config(self):
         """デフォルト設定ファイルの作成"""
-        try:
-            ensure_storage_directory()
-        except RuntimeError as exc:
-            self.logger.error(str(exc))
-            raise
-
         config = configparser.ConfigParser()
 
         config['serial'] = {
@@ -378,15 +481,36 @@ class SerialKeyboardEmulator:
             'buffer_msec': '0'
         }
 
-        try:
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                config.write(f)
-        except OSError as exc:
-            message = f"設定ファイル {CONFIG_FILE} を作成できません: {exc}"
-            self.logger.error(message)
-            raise RuntimeError(message) from exc
-        self.logger.info("デフォルト設定ファイルを作成しました")
+        config['output'] = {
+            'header': '',
+            'footer': ''
+        }
+
         self._config_parser = config
+
+        errors = []
+        for candidate in CONFIG_CANDIDATE_PATHS:
+            self.config_path = candidate
+            try:
+                self._persist_config()
+            except OSError as exc:
+                errors.append((candidate, exc))
+                self.logger.warning(
+                    f"設定ファイル {candidate} を作成できませんでした: {exc}"
+                )
+                continue
+
+            self.logger.info(f"デフォルト設定ファイルを作成しました ({candidate})")
+            self.output_config = {
+                'header_template': '',
+                'footer_template': '',
+            }
+            return
+
+        message = "; ".join(
+            f"{path}: {exc}" for path, exc in errors
+        ) or '未知の理由'
+        raise RuntimeError(f"設定ファイルを作成できませんでした ({message})")
 
     def validate_serial_config(self, config):
         """シリアル通信の設定値を検証"""
@@ -479,26 +603,19 @@ class SerialKeyboardEmulator:
         if port == current_port:
             self.logger.info(f"ポート {port} は既に選択されています")
             return
-
         if port not in self.available_ports:
             self.logger.warning(f"ポート {port} は現在の一覧に存在しませんが接続を試行します")
 
         with self._lock:
             self.serial_config['port'] = port
-            if self._config_parser and 'serial' in self._config_parser:
+            if self._config_parser and 'serial' in self._config_parser and self.config_path:
                 self._config_parser['serial']['port'] = port
                 try:
-                    ensure_storage_directory()
-                except RuntimeError as exc:
-                    self.logger.error(str(exc))
-                else:
-                    try:
-                        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                            self._config_parser.write(f)
-                    except OSError as exc:
-                        self.logger.error(
-                            f"設定ファイル {CONFIG_FILE} への書き込みに失敗しました: {exc}"
-                        )
+                    self._persist_config()
+                except OSError as exc:
+                    self.logger.error(
+                        f"設定ファイル {self.config_path} への書き込みに失敗しました: {exc}"
+                    )
 
         self.logger.info(f"シリアルポートを {port} に更新しました。再接続を実行します")
         self._reconnect_event.set()
@@ -508,12 +625,6 @@ class SerialKeyboardEmulator:
         """アプリケーション終了処理"""
         self.logger.info("ユーザー操作によりアプリケーションを終了します")
         self.cleanup()
-        if icon:
-            try:
-                icon.visible = False
-            except Exception:
-                pass
-            icon.stop()
 
     def validate_settings_config(self, config):
         """一般設定の検証"""
@@ -523,25 +634,34 @@ class SerialKeyboardEmulator:
 
     def read_config(self):
         """設定ファイルを読み込む"""
-        try:
-            ensure_storage_directory()
-        except RuntimeError as exc:
-            self.logger.error(str(exc))
-            raise
+        config_path = self._resolve_config_path()
+
+        if not os.path.exists(config_path):
+            self.logger.warning("設定ファイルが見つかりません。デフォルト設定を作成します。")
+            self.config_path = config_path
+            self.create_default_config()
+            config_path = self.config_path
+        else:
+            self.config_path = config_path
 
         config = configparser.ConfigParser()
+        try:
+            read_files = config.read(config_path, encoding='utf-8')
+        except OSError as exc:
+            raise RuntimeError(f"設定ファイル {config_path} を読み込めませんでした: {exc}") from exc
 
-        if not os.path.exists(CONFIG_FILE):
-            self.logger.warning("設定ファイルが見つかりません。デフォルト設定を作成します。")
-            self.create_default_config()
+        if not read_files:
+            raise RuntimeError(f"設定ファイル {config_path} の読み込みに失敗しました")
 
-        config.read(CONFIG_FILE, encoding='utf-8')
         self._config_parser = config
+        self.logger.info(f"設定ファイルを読み込みました: {config_path}")
+
+        if not config.has_section('output'):
+            config.add_section('output')
 
         try:
             self.serial_config = {
                 'port': config['serial']['port'],
-                'baudrate': int(config['serial']['baudrate']),
                 'bytesize': int(config['serial']['bytesize']),
                 'parity': config['serial']['parity'],
                 'stopbits': int(config['serial']['stopbits']),
@@ -552,10 +672,17 @@ class SerialKeyboardEmulator:
                 'encoding': config.get('settings', 'encoding', fallback='sjis'),
                 'buffer_msec': config.getint('settings', 'buffer_msec', fallback=0)
             }
-            
+
+            raw_header = config.get('output', 'header', fallback='')
+            raw_footer = config.get('output', 'footer', fallback='')
+            self.output_config = {
+                'header_template': self._decode_template(raw_header, 'header'),
+                'footer_template': self._decode_template(raw_footer, 'footer'),
+            }
+
             self.validate_serial_config(self.serial_config)
             self.validate_settings_config(self.settings_config)
-            
+
         except KeyError as e:
             raise KeyError(f"設定キーが見つかりません: {e}")
         except ValueError as e:
@@ -566,21 +693,27 @@ class SerialKeyboardEmulator:
         if not data:
             return
 
-        self.logger.info(f"受信: {data}")
+        payload = str(data)
+        formatted_payload = self._apply_output_templates(payload)
+
+        self.logger.info(f"受信: {payload}")
+        if formatted_payload != payload:
+            self.logger.info(f"整形後: {formatted_payload}")
         self.last_activity = time.time()
         with self._lock:
             add_enter = self.settings_config.get('add_enter', False) if self.settings_config else False
 
         clipboard_backup = None
         clipboard_ready = False
+
         try:
             clipboard_backup = backup_clipboard()
-            set_clipboard_text(data)
+            set_clipboard_text(formatted_payload)
 
             timeout = time.time() + CLIPBOARD_TIMEOUT
             while time.time() < timeout:
                 try:
-                    if get_clipboard_text() == data:
+                    if get_clipboard_text() == formatted_payload:
                         clipboard_ready = True
                         break
                 except ClipboardError:
@@ -959,6 +1092,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 

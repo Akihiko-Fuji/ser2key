@@ -158,7 +158,8 @@ def setup_logging():
         handler = RotatingFileHandler(
             LOG_FILE,
             maxBytes=512*1024,
-            backupCount=3
+            backupCount=3,
+            encoding='utf-8'
         )
 
         formatter = logging.Formatter(
@@ -357,7 +358,7 @@ class SerialKeyboardEmulator:
                 'bytesize': int(config['serial']['bytesize']),
                 'parity': config['serial']['parity'],
                 'stopbits': int(config['serial']['stopbits']),
-                'timeout': int(config['serial']['timeout'])
+                'timeout': float(config['serial']['timeout'])
             }
             self.settings_config = {
                 'add_enter': config.getboolean('settings', 'add_enter', fallback=True),
@@ -458,7 +459,7 @@ class SerialKeyboardEmulator:
 
                         if ser.in_waiting > 0:
                             try:
-                                data = ser.readline().decode(encoding).strip()
+                                data = ser.readline().decode(encoding).rstrip('\r\n')
                                 if not data:
                                     pass
                                 elif buffer_duration_ms <= 0:
@@ -768,6 +769,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 

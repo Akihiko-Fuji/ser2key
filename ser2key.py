@@ -21,6 +21,7 @@ limitations under the License.
 """
 
 import ctypes
+from ctypes import wintypes
 import serial
 from serial.tools import list_ports
 import threading
@@ -56,6 +57,108 @@ KEYEVENTF_KEYUP = 0x0002
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
+ole32 = ctypes.OleDLL('ole32')
+
+ole32.OleInitialize.restype = wintypes.HRESULT
+ole32.OleInitialize.argtypes = [ctypes.c_void_p]
+ole32.OleGetClipboard.restype = wintypes.HRESULT
+ole32.OleGetClipboard.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+ole32.OleSetClipboard.restype = wintypes.HRESULT
+ole32.OleSetClipboard.argtypes = [ctypes.c_void_p]
+ole32.OleFlushClipboard.restype = wintypes.HRESULT
+ole32.OleFlushClipboard.argtypes = []
+
+S_OK = 0
+S_FALSE = 1
+
+
+class _IUnknownVTable(ctypes.Structure):
+    _fields_ = [
+        ('QueryInterface', ctypes.c_void_p),
+        ('AddRef', ctypes.c_void_p),
+        ('Release', ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)),
+    ]
+
+
+class _IUnknown(ctypes.Structure):
+    _fields_ = [('lpVtbl', ctypes.POINTER(_IUnknownVTable))]
+
+
+class ClipboardBackupData:
+    """保持しているクリップボードデータのバックアップ"""
+
+    def __init__(self, data_object=None, is_empty=False):
+        self.data_object = data_object
+        self.is_empty = is_empty
+
+    def release(self):
+        """COM オブジェクトの参照カウントを解放"""
+        if self.data_object:
+            obj_ptr = ctypes.cast(ctypes.c_void_p(self.data_object), ctypes.POINTER(_IUnknown))
+            release = obj_ptr.contents.lpVtbl.contents.Release
+            release(obj_ptr)
+            self.data_object = None
+
+
+_ole_thread_state = threading.local()
+
+
+def ensure_ole_initialized():
+    """現在のスレッドで OLE を初期化"""
+    if getattr(_ole_thread_state, 'initialized', False):
+        return
+
+    hr = ole32.OleInitialize(None)
+    if hr not in (S_OK, S_FALSE):
+        raise ClipboardError(f"OLE の初期化に失敗しました (HRESULT=0x{hr:08X})")
+
+    _ole_thread_state.initialized = True
+
+
+def is_clipboard_empty():
+    """クリップボードが空であるか確認"""
+    try:
+        with open_clipboard():
+            kernel32.SetLastError(0)
+            first_format = user32.EnumClipboardFormats(0)
+            if first_format == 0 and kernel32.GetLastError() == 0:
+                return True
+    except ClipboardError:
+        pass
+    return False
+
+
+def backup_clipboard():
+    """クリップボードの全データを退避"""
+    ensure_ole_initialized()
+
+    empty = is_clipboard_empty()
+
+    data_object = ctypes.c_void_p()
+    hr = ole32.OleGetClipboard(ctypes.byref(data_object))
+    if hr < 0:
+        raise ClipboardError(f"クリップボードの退避に失敗しました (HRESULT=0x{hr & 0xFFFFFFFF:08X})")
+
+    return ClipboardBackupData(data_object.value, empty)
+
+
+def restore_clipboard(backup):
+    """退避したクリップボード内容を復元"""
+    if not backup:
+        return
+
+    try:
+        ensure_ole_initialized()
+        if backup.is_empty:
+            clear_clipboard()
+        elif backup.data_object:
+            hr = ole32.OleSetClipboard(ctypes.c_void_p(backup.data_object))
+            if hr < 0:
+                raise ClipboardError(f"クリップボードの復元に失敗しました (HRESULT=0x{hr & 0xFFFFFFFF:08X})")
+        else:
+            clear_clipboard()
+    finally:
+        backup.release()
 
 class ClipboardError(Exception):
     """クリップボード操作に失敗した場合の例外"""
@@ -379,14 +482,14 @@ class SerialKeyboardEmulator:
         if not data:
             return
 
-        self.logger.info(f"受信: {data}")
-        self.last_activity = time.time()
+        self.logger.info(f"受信: {data}")␊
+        self.last_activity = time.time()␊
 
         with self._lock:
-            original_clipboard = None
+            clipboard_backup = None
             clipboard_ready = False
             try:
-                original_clipboard = get_clipboard_text()
+                clipboard_backup = backup_clipboard()
                 set_clipboard_text(data)
 
                 timeout = time.time() + CLIPBOARD_TIMEOUT
@@ -414,8 +517,7 @@ class SerialKeyboardEmulator:
                 self.error_count = 0
             finally:
                 try:
-                    if original_clipboard is not None:
-                        set_clipboard_text(original_clipboard)
+                    restore_clipboard(clipboard_backup)
                 except ClipboardError:
                     self.logger.warning("クリップボードの復元に失敗しました")
 
@@ -769,6 +871,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 

@@ -3,7 +3,7 @@
 """
 Serial to keyboard:
 Author: Akihiko Fujita
-Version: 1.3
+Version: 1.4
 
 Copyright 2025 Akihiko Fujita
 
@@ -761,4 +761,5 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 

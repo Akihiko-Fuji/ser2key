@@ -198,7 +198,8 @@ class SerialKeyboardEmulator:
         
         config['settings'] = {
             'add_enter': 'true',
-            'encoding': 'sjis'
+            'encoding': 'sjis',
+            'buffer_msec': '0'
         }
 
         with open(CONFIG_FILE, 'w') as f:
@@ -351,7 +352,8 @@ class SerialKeyboardEmulator:
             }
             self.settings_config = {
                 'add_enter': config.getboolean('settings', 'add_enter', fallback=True),
-                'encoding': config.get('settings', 'encoding', fallback='sjis')
+                'encoding': config.get('settings', 'encoding', fallback='sjis'),
+                'buffer_msec': config.getint('settings', 'buffer_msec', fallback=0)
             }
             
             self.validate_serial_config(self.serial_config)
@@ -424,11 +426,32 @@ class SerialKeyboardEmulator:
                     self.logger.info("シリアルポートに接続しました")
                     self._reconnect_event.clear()
 
+                    buffer_data = []
+                    buffer_start_time = None
+
                     while self.is_running and not self._reconnect_event.is_set():
+                        with self._lock:
+                            buffer_duration_ms = self.settings_config.get('buffer_msec', 0) if self.settings_config else 0
+
+                        if buffer_duration_ms <= 0 and buffer_data:
+                            combined = ''.join(buffer_data)
+                            if combined:
+                                self.process_serial_data(combined)
+                            buffer_data = []
+                            buffer_start_time = None
+
                         if ser.in_waiting > 0:
                             try:
                                 data = ser.readline().decode(encoding).strip()
-                                self.process_serial_data(data)
+                                if not data:
+                                    pass
+                                elif buffer_duration_ms <= 0:
+                                    self.process_serial_data(data)
+                                else:
+                                    if buffer_start_time is None:
+                                        buffer_start_time = time.monotonic()
+                                        buffer_data = []
+                                    buffer_data.append(data)
                             except UnicodeDecodeError as e:
                                 self.logger.error(f"デコードエラー: {e}")
                                 self.error_count += 1
@@ -436,11 +459,31 @@ class SerialKeyboardEmulator:
                                 self.logger.error(f"予期せぬエラー: {e}")
                                 self.error_count += 1
 
+                        if buffer_duration_ms > 0 and buffer_start_time is not None:
+                            elapsed = (time.monotonic() - buffer_start_time) * 1000
+                            if elapsed >= buffer_duration_ms:
+                                combined = ''.join(buffer_data)
+                                if combined:
+                                    self.process_serial_data(combined)
+                                buffer_data = []
+                                buffer_start_time = None
+
                         if self._reconnect_event.is_set():
                             self.logger.info("再接続要求を受け取りました")
+                            if buffer_data:
+                                combined = ''.join(buffer_data)
+                                if combined:
+                                    self.process_serial_data(combined)
+                            buffer_data = []
+                            buffer_start_time = None
                             break
 
                         time.sleep(0.05)
+
+                    if buffer_data:
+                        combined = ''.join(buffer_data)
+                        if combined:
+                            self.process_serial_data(combined)
 
             except serial.SerialException as e:
                 if self.tray_icon:
@@ -701,4 +744,5 @@ def main():
             emulator.cleanup()
 
 if __name__ == "__main__":
+
     main()

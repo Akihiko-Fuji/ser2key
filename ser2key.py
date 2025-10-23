@@ -20,28 +20,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import serial␊
-from serial.tools import list_ports␊
-import pyautogui␊
-import pyperclip␊
-import threading␊
-import time␊
-import configparser␊
-import tkinter as tk␊
-from tkinter import messagebox␊
-from PIL import Image, ImageDraw␊
-import pystray␊
-from pystray import MenuItem as item␊
-import sys␊
-import os␊
-import logging␊
-from logging.handlers import RotatingFileHandler␊
-import psutil␊
+import ctypes
+import serial
+from serial.tools import list_ports
+import threading
+import time
+import configparser
+import pystray
+from pystray import MenuItem as item
+import sys
+import os
+import logging
+from logging.handlers import RotatingFileHandler
+from contextlib import contextmanager
 
 
 # 定数定義
-DEFAULT_ICON_SIZE = (32, 32) 
-DEFAULT_ICON_COLOR = 'white'
+DEFAULT_ICON_SIZE = (32, 32)
 CONFIG_FILE = 'config.ini'
 ICON_FILE = 'f.png'
 LOG_FILE = 'ser2key.log'
@@ -50,10 +45,102 @@ ACTIVITY_TIMEOUT = 300  # アクティビティタイムアウト（秒）
 MONITOR_INTERVAL = 60   # モニタリング間隔（秒）
 MAX_ERRORS = 10         # 最大エラー回数
 CLIPBOARD_TIMEOUT = 5   # クリップボード操作タイムアウト（秒）
-RESOURCE_WARNING_THRESHOLD = {
-    'memory': 90,       # メモリ使用率警告閾値（%）
-    'cpu': 80           # CPU使用率警告閾値（%）
-}
+
+CF_UNICODETEXT = 13
+GMEM_MOVEABLE = 0x0002
+
+VK_CONTROL = 0x11
+VK_V = 0x56
+VK_RETURN = 0x0D
+KEYEVENTF_KEYUP = 0x0002
+
+user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+
+class ClipboardError(Exception):
+    """クリップボード操作に失敗した場合の例外"""
+
+
+@contextmanager
+def open_clipboard():
+    """クリップボードを安全に開くためのコンテキストマネージャ"""
+    if not user32.OpenClipboard(None):
+        raise ClipboardError('クリップボードを開けませんでした')
+    try:
+        yield
+    finally:
+        user32.CloseClipboard()
+
+
+def get_clipboard_text():
+    """現在のクリップボード文字列を取得"""
+    with open_clipboard():
+        handle = user32.GetClipboardData(CF_UNICODETEXT)
+        if not handle:
+            return None
+        ptr = kernel32.GlobalLock(handle)
+        if not ptr:
+            raise ClipboardError('クリップボードデータのロックに失敗しました')
+        try:
+            data = ctypes.wstring_at(ptr)
+        finally:
+            kernel32.GlobalUnlock(handle)
+        return data
+
+
+def set_clipboard_text(text):
+    """クリップボードに文字列を設定"""
+    if text is None:
+        return clear_clipboard()
+
+    buffer = ctypes.create_unicode_buffer(text)
+    size = ctypes.sizeof(buffer)
+    handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, size)
+    if not handle:
+        raise ClipboardError('メモリ確保に失敗しました')
+
+    ptr = kernel32.GlobalLock(handle)
+    if not ptr:
+        kernel32.GlobalFree(handle)
+        raise ClipboardError('メモリロックに失敗しました')
+
+    try:
+        ctypes.memmove(ptr, ctypes.addressof(buffer), size)
+    finally:
+        kernel32.GlobalUnlock(handle)
+
+    with open_clipboard():
+        user32.EmptyClipboard()
+        if not user32.SetClipboardData(CF_UNICODETEXT, handle):
+            kernel32.GlobalFree(handle)
+            raise ClipboardError('クリップボードへの設定に失敗しました')
+
+
+def clear_clipboard():
+    """クリップボードを空にする"""
+    with open_clipboard():
+        user32.EmptyClipboard()
+
+
+def _key_event(vk_code, key_up=False):
+    """キーイベントを送信"""
+    scan_code = user32.MapVirtualKeyW(vk_code, 0)
+    flags = KEYEVENTF_KEYUP if key_up else 0
+    user32.keybd_event(vk_code, scan_code, flags, 0)
+
+
+def send_ctrl_v(add_enter=False):
+    """Ctrl+V と必要に応じて Enter キーを送信"""
+    _key_event(VK_CONTROL)
+    _key_event(VK_V)
+    _key_event(VK_V, key_up=True)
+    _key_event(VK_CONTROL, key_up=True)
+
+    if add_enter:
+        time.sleep(0.05)
+        _key_event(VK_RETURN)
+        _key_event(VK_RETURN, key_up=True)
+
 
 def setup_logging():
     """ログ設定を初期化"""
@@ -158,18 +245,33 @@ class SerialKeyboardEmulator:
         if not self.tray_icon:
             return
 
+        def refresh_ports_action(icon, menu_item):
+            self.refresh_available_ports()
+
         menu_definition = [
-            item('ポート一覧を更新', lambda icon, menu_item: self.refresh_available_ports()),
+            item('ポート一覧を更新', refresh_ports_action),
             pystray.Menu.SEPARATOR
         ]
 
         if self.available_ports:
             for port in self.available_ports:
+                def make_select_action(target_port):
+                    def select_action(icon, menu_item):
+                        self.update_serial_port(target_port)
+
+                    return select_action
+
+                def make_checked(target_port):
+                    def is_checked(menu_item):
+                        return self._is_selected_port(target_port)
+
+                    return is_checked
+
                 menu_definition.append(
                     item(
                         f'接続: {port}',
-                        lambda icon, menu_item, port=port: self.update_serial_port(port),
-                        checked=lambda menu_item, port=port: self._is_selected_port(port)
+                        make_select_action(port),
+                        checked=make_checked(port)
                     )
                 )
         else:
@@ -260,22 +362,6 @@ class SerialKeyboardEmulator:
         except ValueError as e:
             raise ValueError(f"不正な設定値です: {e}")
 
-    def check_system_resources(self):
-        """システムリソースの状態確認"""
-        try:
-            # メモリ使用率の確認
-            memory_percent = psutil.virtual_memory().percent
-            if memory_percent > RESOURCE_WARNING_THRESHOLD['memory']:
-                self.logger.warning(f"メモリ使用率が高くなっています: {memory_percent}%")
-            
-            # CPU使用率の確認
-            cpu_percent = psutil.cpu_percent(interval=1)
-            if cpu_percent > RESOURCE_WARNING_THRESHOLD['cpu']:
-                self.logger.warning(f"CPU使用率が高くなっています: {cpu_percent}%")
-            
-        except Exception as e:
-            self.logger.error(f"リソース監視エラー: {e}")
-
     def process_serial_data(self, data):
         """シリアルデータを処理してキーボード入力をシミュレート"""
         if not data:
@@ -284,30 +370,37 @@ class SerialKeyboardEmulator:
         self.logger.info(f"受信: {data}")
         self.last_activity = time.time()
 
-        with self._lock:  # クリップボード操作をスレッドセーフに
+        with self._lock:
             original_clipboard = None
             try:
-                original_clipboard = pyperclip.paste()
-                pyperclip.copy(data)
+                original_clipboard = get_clipboard_text()
+                set_clipboard_text(data)
 
-                # タイムアウト付きの待機を実装
                 timeout = time.time() + CLIPBOARD_TIMEOUT
-                while not pyperclip.paste() == data and time.time() < timeout:
-                    time.sleep(0.1)
-                
-                pyautogui.hotkey('ctrl', 'v')
-                
-                if self.settings_config['add_enter']:
-                    pyautogui.press('enter')
-            except Exception as e:
+                while time.time() < timeout:
+                    try:
+                        if get_clipboard_text() == data:
+                            break
+                    except ClipboardError:
+                        time.sleep(0.05)
+                        continue
+                    time.sleep(0.05)
+
+                send_ctrl_v(self.settings_config.get('add_enter', False))
+            except ClipboardError as e:
                 self.logger.error(f"クリップボード操作エラー: {e}")
                 self.error_count += 1
+            except Exception as e:
+                self.logger.error(f"入力操作エラー: {e}")
+                self.error_count += 1
             finally:
-                if original_clipboard is not None:
-                    try:
-                        pyperclip.copy(original_clipboard)
-                    except Exception:
-                        self.logger.warning("クリップボードの復元に失敗しました")
+                try:
+                    if original_clipboard is None:
+                        clear_clipboard()
+                    else:
+                        set_clipboard_text(original_clipboard)
+                except ClipboardError:
+                    self.logger.warning("クリップボードの復元に失敗しました")
 
     def read_serial_and_type(self):
         """シリアルポートからデータを読み取り、キーボード入力に変換"""
@@ -343,10 +436,6 @@ class SerialKeyboardEmulator:
                                 self.logger.error(f"予期せぬエラー: {e}")
                                 self.error_count += 1
 
-                        # システムリソースの定期チェック
-                        if time.time() - self.last_activity > MONITOR_INTERVAL:
-                            self.check_system_resources()
-
                         if self._reconnect_event.is_set():
                             self.logger.info("再接続要求を受け取りました")
                             break
@@ -376,7 +465,7 @@ class SerialKeyboardEmulator:
 
 class ApplicationMonitor:
     """アプリケーションの状態を監視するクラス"""
-    
+
     def __init__(self, emulator):
         self.emulator = emulator
         self.logger = logging.getLogger('ser2key.monitor')
@@ -388,50 +477,115 @@ class ApplicationMonitor:
                 # アクティビティタイムアウトチェック
                 if time.time() - self.emulator.last_activity > ACTIVITY_TIMEOUT:
                     self.logger.warning("長時間データ受信がありません")
-                
+
                 # エラー回数チェック
                 if self.emulator.error_count >= MAX_ERRORS:
-                    self.logger.error("エラー回数が上限を超えました。アプリケーションを再起動します")
-                    self.restart_application()
-                
+                    self.logger.error("エラー回数が上限を超えました。アプリケーションを停止します")
+                    self.emulator.cleanup()
+                    break
+
                 time.sleep(MONITOR_INTERVAL)
-                
+
             except Exception as e:
                 self.logger.error(f"モニタリングエラー: {e}")
-    
-    def restart_application(self):
-        """アプリケーションの再起動処理"""
-        self.emulator.cleanup()
-        os.execv(sys.executable, ['python'] + sys.argv)
+
+class SimpleIconImage:
+    """Pillow 非依存で pystray が扱えるシンプルな画像表現"""
+
+    def __init__(self, width, height, data, mode='RGBA'):
+        self.width = width
+        self.height = height
+        self.size = (width, height)
+        self.mode = mode
+        self._data = bytes(data)
+
+    def _to_rgba(self):
+        if self.mode == 'RGBA':
+            return self._data
+        if self.mode == 'BGRA':
+            converted = bytearray()
+            for i in range(0, len(self._data), 4):
+                b, g, r, a = self._data[i:i + 4]
+                converted.extend((r, g, b, a))
+            return bytes(converted)
+        raise ValueError('サポートされていないモードです')
+
+    def _to_bgra(self):
+        if self.mode == 'BGRA':
+            return self._data
+        if self.mode == 'RGBA':
+            converted = bytearray()
+            for i in range(0, len(self._data), 4):
+                r, g, b, a = self._data[i:i + 4]
+                converted.extend((b, g, r, a))
+            return bytes(converted)
+        raise ValueError('サポートされていないモードです')
+
+    def convert(self, mode):
+        if mode == self.mode:
+            return self
+        if mode == 'RGBA':
+            return SimpleIconImage(self.width, self.height, self._to_rgba(), mode='RGBA')
+        if mode == 'BGRA':
+            return SimpleIconImage(self.width, self.height, self._to_bgra(), mode='BGRA')
+        raise ValueError('サポートされていないモードです')
+
+    def tobytes(self, *args):
+        if not args:
+            return self._to_rgba()
+        if args[0] == 'raw':
+            if len(args) > 1 and args[1] == 'BGRA':
+                return self._to_bgra()
+            if len(args) > 1 and args[1] == 'RGBA':
+                return self._to_rgba()
+        return self._to_rgba()
+
 
 class TrayIconManager:
     """タスクトレイアイコンを管理するクラス"""
-    
+
     @staticmethod
     def create_default_icon():
         """デフォルトアイコンを作成"""
-        image = Image.new('RGB', DEFAULT_ICON_SIZE, color=DEFAULT_ICON_COLOR)
-        draw = ImageDraw.Draw(image)
-        draw.rectangle([0, 0, DEFAULT_ICON_SIZE[0]-1, DEFAULT_ICON_SIZE[1]-1], outline='black')
-        draw.text((20, 25), 'S2K', fill='black')
-        return image
+        width, height = DEFAULT_ICON_SIZE
+        data = bytearray()
+        for y in range(height):
+            for x in range(width):
+                if x < width // 2:
+                    data.extend((0, 120, 215, 255))  # Windows ライクな青
+                else:
+                    data.extend((255, 255, 255, 255))
+        return SimpleIconImage(width, height, data)
+
+    @staticmethod
+    def _load_with_pillow(image_path):
+        try:
+            from PIL import Image
+        except Exception:
+            return None
+
+        try:
+            with Image.open(image_path) as img:
+                return img.convert('RGBA')
+        except Exception as exc:
+            logging.getLogger('ser2key').warning(f"Pillow によるアイコン読み込みに失敗: {exc}")
+            return None
 
     @staticmethod
     def create_icon_image():
         """アイコン画像を作成または読み込む"""
-        try:
-            image_path = os.path.join(sys._MEIPASS, ICON_FILE) if hasattr(sys, '_MEIPASS') else ICON_FILE
-            return Image.open(image_path) if os.path.exists(image_path) else TrayIconManager.create_default_icon()
-        except Exception as e:
-            logging.getLogger('ser2key').error(f"アイコン読み込みエラー: {e}")
-            return TrayIconManager.create_default_icon()
+        image_path = os.path.join(sys._MEIPASS, ICON_FILE) if hasattr(sys, '_MEIPASS') else ICON_FILE
+
+        if os.path.exists(image_path):
+            pillow_image = TrayIconManager._load_with_pillow(image_path)
+            if pillow_image is not None:
+                return pillow_image
+
+        return TrayIconManager.create_default_icon()
 
 def show_error_message(message):
     """エラーメッセージをポップアップで表示"""
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showerror("エラー", message)
-    root.destroy()
+    user32.MessageBoxW(None, str(message), "エラー", 0x00000010)
 
 def main():
     """メイン処理"""

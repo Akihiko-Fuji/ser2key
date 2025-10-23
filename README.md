@@ -26,6 +26,8 @@ Designed with **barcode & QR code readers** in mind, `ser2key` delivers superior
 ---
 
 ## Update history
+1.3 Fixed to allow selection of the COM port to connect to from the system tray icon.
+    By limiting the execution environment to Windows and modifying the libraries used, we reduced the size of the executable file.
 1.2 Revised entire code, added validation checks for anomalous values in configuration files, etc.<BR>
 1.1 Enhanced Error Handling.<BR>
 1.0 Release Version.<BR>

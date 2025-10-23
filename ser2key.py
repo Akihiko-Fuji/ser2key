@@ -73,6 +73,7 @@ MONITOR_INTERVAL = 60   # モニタリング間隔（秒）
 MAX_ERRORS = 10         # 最大エラー回数
 CLIPBOARD_TIMEOUT = 5   # クリップボード操作タイムアウト（秒）
 CLIPBRD_E_CANT_OPEN = 0x800401D0
+CLIPBRD_E_EMPTY = 0x800401D1
 
 CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x0002
@@ -171,6 +172,9 @@ def backup_clipboard():
             return ClipboardBackupData(data_object.value, empty)
 
         last_error = hr & 0xFFFFFFFF
+        if last_error == CLIPBRD_E_EMPTY:
+            return ClipboardBackupData(None, True)
+
         if last_error == CLIPBRD_E_CANT_OPEN and time.time() < deadline:
             time.sleep(0.05)
             continue
@@ -178,7 +182,6 @@ def backup_clipboard():
         raise ClipboardError(
             f"クリップボードの退避に失敗しました (HRESULT=0x{last_error:08X})"
         )
-
 
 def restore_clipboard(backup):
     """退避したクリップボード内容を復元"""
@@ -332,6 +335,17 @@ class SerialKeyboardEmulator:
         self.available_ports = []
         self._config_parser = None
         self._reconnect_event = threading.Event()
+
+    def _wait_for_stop_or_reconnect(self, timeout):
+        """終了要求または再接続要求を監視しながら待機"""
+        end_time = time.time() + timeout
+        while self.is_running and time.time() < end_time:
+            remaining = end_time - time.time()
+            wait_time = min(0.1, remaining)
+            if wait_time <= 0:
+                break
+            if self._reconnect_event.wait(wait_time):
+                break
 
     def cleanup(self):
         """リソースの解放処理"""
@@ -554,42 +568,46 @@ class SerialKeyboardEmulator:
 
         self.logger.info(f"受信: {data}")
         self.last_activity = time.time()
-
         with self._lock:
-            clipboard_backup = None
-            clipboard_ready = False
-            try:
-                clipboard_backup = backup_clipboard()
-                set_clipboard_text(data)
+            add_enter = self.settings_config.get('add_enter', False) if self.settings_config else False
 
-                timeout = time.time() + CLIPBOARD_TIMEOUT
-                while time.time() < timeout:
-                    try:
-                        if get_clipboard_text() == data:
-                            clipboard_ready = True
-                            break
-                    except ClipboardError:
-                        time.sleep(0.05)
-                        continue
-                    time.sleep(0.05)
+        clipboard_backup = None
+        clipboard_ready = False
+        try:
+            clipboard_backup = backup_clipboard()
+            set_clipboard_text(data)
 
-                if not clipboard_ready:
-                    raise ClipboardError('クリップボードの内容が更新されませんでした')
-
-                send_ctrl_v(self.settings_config.get('add_enter', False))
-            except ClipboardError as e:
-                self.logger.error(f"クリップボード操作エラー: {e}")
-                self.error_count += 1
-            except Exception as e:
-                self.logger.error(f"入力操作エラー: {e}")
-                self.error_count += 1
-            else:
-                self.error_count = 0
-            finally:
+            timeout = time.time() + CLIPBOARD_TIMEOUT
+            while time.time() < timeout:
                 try:
-                    restore_clipboard(clipboard_backup)
+                    if get_clipboard_text() == data:
+                        clipboard_ready = True
+                        break
                 except ClipboardError:
-                    self.logger.warning("クリップボードの復元に失敗しました")
+                    time.sleep(0.05)
+                    continue
+                time.sleep(0.05)
+
+            if not clipboard_ready:
+                raise ClipboardError('クリップボードの内容が更新されませんでした')
+
+            send_ctrl_v(add_enter)
+        except ClipboardError as e:
+            self.logger.error(f"クリップボード操作エラー: {e}")
+            with self._lock:
+                self.error_count += 1
+        except Exception as e:
+            self.logger.error(f"入力操作エラー: {e}")
+            with self._lock:
+                self.error_count += 1
+        else:
+            with self._lock:
+                self.error_count = 0
+        finally:
+            try:
+                restore_clipboard(clipboard_backup)
+            except ClipboardError:
+                self.logger.warning("クリップボードの復元に失敗しました")
 
     def read_serial_and_type(self):
         """シリアルポートからデータを読み取り、キーボード入力に変換"""
@@ -682,14 +700,14 @@ class SerialKeyboardEmulator:
                 self.logger.error(f"シリアル通信エラー: {e}")
                 with self._lock:
                     self.error_count += 1
-                time.sleep(RECONNECT_DELAY)
+                self._wait_for_stop_or_reconnect(RECONNECT_DELAY)
             except Exception as e:
                 if self.tray_icon:
                     self.tray_icon.title = f"ser2key - エラー ({e})"
                 self.logger.error(f"予期せぬエラー: {e}")
                 with self._lock:
                     self.error_count += 1
-                time.sleep(RECONNECT_DELAY)
+                self._wait_for_stop_or_reconnect(RECONNECT_DELAY)
             finally:
                 if self.tray_icon and self.is_running:
                     self.tray_icon.title = "ser2key - 切断"
@@ -941,6 +959,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 

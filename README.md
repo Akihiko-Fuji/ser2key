@@ -1,67 +1,84 @@
-# ser2key - Serial to Keyboard  
+# ser2key - シリアル入力をキーボード入力へ変換するツール 
 
-## 🚀 Overview  
-**ser2key** is a lightweight Python utility that converts serial input into keyboard events. It listens for incoming serial data and simulates keystrokes. Designed for efficiency, it runs in the **system tray** for seamless background operation.  
+## 🚀 概要  
+**ser2key** は、シリアル入力をキーボードイベントに変換する軽量な Python ユーティリティです。受信したシリアルデータを検出し、それをキーストロークとしてシミュレートします。高い効率性を重視して設計されており、**システムトレイ**上でバックグラウンド動作します。日本語を含むQRコードに対して有効に機能します。
 
-## ✨ Features
-- 🔧 **Configurable Serial Communication** – Adjust settings via `config.ini` (baud rate, parity, timeout, etc.).
-- ⌨️ **Clipboard-based Keystroke Simulation** – Pastes received data as keyboard input.
-- 🚀 **Designed for High-Speed Data Input"** – Outperforms existing tools, especially with **Japanese, Chinese, and Korean characters**.
-- 🖥️ **System Tray Integration** – Quick access and status monitoring.
+## ✨ 主な機能
+- 🔧 **シリアル通信の柔軟な設定** – `config.ini` でボーレート、パリティ、タイムアウトなどを調整可能  
+- ⌨️ **クリップボード経由のキーボード入力** – 受信データをペースト動作として入力  
+- 🚀 **高速なデータ入力に対応** – 特に **日本語・中国語・韓国語** に強く、[既存ツール](https://www.keyence.co.jp/support/codereader/blsrus/soft/#d12)より高速  
+- 🖥️ **システムトレイ連携** – ワンクリックで状態確認・設定変更可能
 
 ---
 
-## ⚙️ Configuration Tips
+## ⚙️ 設定のヒント
 
-### Serial port settings
-Edit the values under the `[serial]` and `[settings]` sections of `config.ini` to control the default port, baud rate, data length, parity, stop bits, encoding, and automatic Enter key behaviour. All of these can also be adjusted at runtime from the system tray menu, and any change is written back to the configuration file for the next launch.
+### シリアルポート設定
+`config.ini` の `[serial]` および `[settings]` セクションを編集することで、  
+- デフォルトのポート  
+- ボーレート  
+- データ長  
+- パリティ  
+- ストップビット  
+- 文字コード  
+- 自動 Enter 挿入有無  
 
-### Formatting output with headers and footers
-Use the `[output]` section of `config.ini` to wrap received serial data before it is pasted. The `header` value is inserted before the serial payload and `footer` after it, making it easy to add things like prefixes, suffixes, or line breaks without changing the device firmware.
+などを指定できます。  
+これらの設定は実行中にもシステムトレイメニューから変更可能で、変更内容は `config.ini` に保存され、次回起動時に反映されます。
 
-Both fields support:
+### 受信データの整形（ヘッダー・フッター）
+`config.ini` の `[output]` セクションを使うと、受信したシリアルデータの前後に任意の文字列を追加できます。  
+`header` はデータの前、`footer` は後に付加され、装置のファームウェアを変更せずに接頭辞・接尾辞や改行などを柔軟に追加可能です。
 
-- **Escape sequences** such as `\n` (newline), `\r` (carriage return), `\t` (tab), and Unicode escapes like `\u3001`.
-- **Date/Time tokens** wrapped in braces. Available tokens are `{DATE}`, `{TIME}`, and `{DATETIME}`. You can optionally specify a [Python `strftime` format](https://docs.python.org/3/library/datetime.html#strftime-and-strptime-format-codes) after a colon, e.g. `{DATE:%Y/%m/%d}` or `{TIME:%H時%M分%S秒}`. The default formats are:
-  - `{DATE}` → `YYYY-MM-DD`
-  - `{TIME}` → `HH:MM:SS`
-  - `{DATETIME}` → `YYYY-MM-DD HH:MM:SS`
+対応している特殊な記述：
+- **エスケープシーケンス**  
+  `\n`（改行）、`\r`（復帰）、`\t`（タブ）、`\u3001`（Unicode 文字）など
 
-Example:
+- **日時トークン**  
+  `{DATE}` `{TIME}` `{DATETIME}` が利用可能。  
+  コロン区切りで [Python `strftime` 形式](https://docs.python.org/3/library/datetime.html#strftime-and-strptime-format-codes) を指定できます。例：
+  - `{DATE:%Y/%m/%d}`
+  - `{TIME:%H時%M分%S秒}`
 
+デフォルトの書式：
+- `{DATE}` → `YYYY-MM-DD`  
+- `{TIME}` → `HH:MM:SS`  
+- `{DATETIME}` → `YYYY-MM-DD HH:MM:SS`
+
+#### 設定例：
 ```ini
 [output]
 header={DATE:%Y%m%d}\t
 footer=\r\n--\n
 ```
 
-This configuration pastes the current date followed by a tab before the serial data, and appends a Windows-style line ending plus a separator line afterwards.
+### パフォーマンスの強み
 
----
+バーコードリーダーや QR コードリーダーの利用を想定して設計されており、多言語テキストの処理速度に優れています。
+⚡ 特に 日本語・中国語・韓国語 の QR コード入力時には、Keyence AutoID Keyboard Wedge より数倍高速です。
 
-## 🔥 Performance Advantage  
-Designed with **barcode & QR code readers** in mind, `ser2key` delivers superior speed when handling multilingual text.  
-⚡ **Several times faster** than [Keyence AutoID Keyboard Wedge](https://www.keyence.co.jp/support/codereader/blsrus/soft/#d12) when processing **Japanese, Chinese, or Korean** characters from QR codes.  
+### 💻 対応環境
 
----
+✅ Windows（テスト済み）– システムトレイ対応
+⚠️ その他の OS – トレイ機能の依存のため、動作には修正が必要。また、シリアル通信部分の動作確認は Windows 環境を前提としています。
+🔌 あらゆるシリアルデバイスに対応 – Windows 上で COM ポートとして認識される RS-232C、USB シリアルアダプタ、Bluetooth SPP など。
 
-## 💻 Supported Platforms  
-✅ **Windows** (tested) – Runs in the system tray.  
-⚠️ **Other OS** – Requires modification due to system tray dependencies, and In addition, the serial communication process validation is for Windows OS and needs to be corrected.<BR>
-🔌 **Compatible with all serial devices** – Recognized as a COM port by Windows, including RS-232C, USB serial adapters, and Bluetooth SPP mode. 
+### 🆙 更新履歴
 
----
+1.3
+システムトレイアイコンから接続する COM ポートを選択可能に対応。<BR>
+Windows に特化し使用ライブラリを見直すことで実行ファイルサイズを縮小。
 
-## Update history
-1.3 Fixed to allow selection of the COM port to connect to from the system tray icon.
-    By limiting the execution environment to Windows and modifying the libraries used, we reduced the size of the executable file.
-1.2 Revised entire code, added validation checks for anomalous values in configuration files, etc.<BR>
-1.1 Enhanced Error Handling.<BR>
-1.0 Release Version.<BR>
+1.2
+コード全体をリファクタリング。設定ファイルの異常値チェック機能を追加。
 
----
+1.1
+エラーハンドリングを強化。
 
-## 📥 Download  
-Includes Windows x64 executable and configuration files.
+1.0
+初回リリース。
+
+### 📥 ダウンロード
+
+Windows x64 実行ファイルと設定ファイルを含みます。
 📌 [ser2key.zip](https://github.com/Akihiko-Fuji/ser2key/raw/refs/heads/main/ser2key.zip)  
-

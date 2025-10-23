@@ -146,20 +146,29 @@ def setup_logging():
     """ログ設定を初期化"""
     logger = logging.getLogger('ser2key')
     logger.setLevel(logging.INFO)
-    
-    handler = RotatingFileHandler(
-        LOG_FILE,
-        maxBytes=512*1024,
-        backupCount=3
+
+    log_path = os.path.abspath(LOG_FILE)
+    handler_exists = any(
+        isinstance(handler, RotatingFileHandler) and
+        getattr(handler, 'baseFilename', None) == log_path
+        for handler in logger.handlers
     )
-    
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    
+
+    if not handler_exists:
+        handler = RotatingFileHandler(
+            LOG_FILE,
+            maxBytes=512*1024,
+            backupCount=3
+        )
+
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
     return logger
+
 
 class SerialKeyboardEmulator:
     """シリアル通信とキーボードエミュレーションを管理するクラス"""
@@ -404,9 +413,7 @@ class SerialKeyboardEmulator:
                 self.error_count = 0
             finally:
                 try:
-                    if original_clipboard is None:
-                        clear_clipboard()
-                    else:
+                    if original_clipboard is not None:
                         set_clipboard_text(original_clipboard)
                 except ClipboardError:
                     self.logger.warning("クリップボードの復元に失敗しました")
@@ -761,5 +768,6 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 

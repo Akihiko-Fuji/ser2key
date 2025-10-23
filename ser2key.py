@@ -36,16 +36,43 @@ from logging.handlers import RotatingFileHandler
 from contextlib import contextmanager
 
 
+if os.name != 'nt':
+    raise OSError('ser2key は Windows 専用のアプリケーションです。')
+
+
 # 定数定義
 DEFAULT_ICON_SIZE = (32, 32)
-CONFIG_FILE = 'config.ini'
 ICON_FILE = 'f.png'
-LOG_FILE = 'ser2key.log'
+APP_NAME = 'ser2key'
+
+
+def _get_storage_directory():
+    base_dir = os.getenv('APPDATA')
+    if not base_dir:
+        base_dir = os.path.expanduser('~')
+    return os.path.join(base_dir, APP_NAME)
+
+
+STORAGE_DIR = _get_storage_directory()
+CONFIG_FILE = os.path.join(STORAGE_DIR, 'config.ini')
+LOG_FILE = os.path.join(STORAGE_DIR, 'ser2key.log')
+
+
+def ensure_storage_directory():
+    try:
+        os.makedirs(STORAGE_DIR, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(
+            f'設定保存用ディレクトリ {STORAGE_DIR} を作成できません: {exc}'
+        ) from exc
+
+
 RECONNECT_DELAY = 5     # 再接続までの待機時間（秒）
 ACTIVITY_TIMEOUT = 300  # アクティビティタイムアウト（秒）
 MONITOR_INTERVAL = 60   # モニタリング間隔（秒）
 MAX_ERRORS = 10         # 最大エラー回数
 CLIPBOARD_TIMEOUT = 5   # クリップボード操作タイムアウト（秒）
+CLIPBRD_E_CANT_OPEN = 0x800401D0
 
 CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x0002
@@ -134,12 +161,23 @@ def backup_clipboard():
 
     empty = is_clipboard_empty()
 
-    data_object = ctypes.c_void_p()
-    hr = ole32.OleGetClipboard(ctypes.byref(data_object))
-    if hr < 0:
-        raise ClipboardError(f"クリップボードの退避に失敗しました (HRESULT=0x{hr & 0xFFFFFFFF:08X})")
+    deadline = time.time() + CLIPBOARD_TIMEOUT
+    last_error = None
 
-    return ClipboardBackupData(data_object.value, empty)
+    while True:
+        data_object = ctypes.c_void_p()
+        hr = ole32.OleGetClipboard(ctypes.byref(data_object))
+        if hr >= 0:
+            return ClipboardBackupData(data_object.value, empty)
+
+        last_error = hr & 0xFFFFFFFF
+        if hr == CLIPBRD_E_CANT_OPEN and time.time() < deadline:
+            time.sleep(0.05)
+            continue
+
+        raise ClipboardError(
+            f"クリップボードの退避に失敗しました (HRESULT=0x{last_error:08X})"
+        )
 
 
 def restore_clipboard(backup):
@@ -247,6 +285,11 @@ def send_ctrl_v(add_enter=False):
 
 def setup_logging():
     """ログ設定を初期化"""
+    try:
+        ensure_storage_directory()
+    except RuntimeError as exc:
+        raise RuntimeError(str(exc)) from exc
+
     logger = logging.getLogger('ser2key')
     logger.setLevel(logging.INFO)
 
@@ -298,8 +341,14 @@ class SerialKeyboardEmulator:
 
     def create_default_config(self):
         """デフォルト設定ファイルの作成"""
+        try:
+            ensure_storage_directory()
+        except RuntimeError as exc:
+            self.logger.error(str(exc))
+            raise
+
         config = configparser.ConfigParser()
-        
+
         config['serial'] = {
             'port': 'COM8',
             'baudrate': '9600',
@@ -315,8 +364,13 @@ class SerialKeyboardEmulator:
             'buffer_msec': '0'
         }
 
-        with open(CONFIG_FILE, 'w') as f:
-            config.write(f)
+        try:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                config.write(f)
+        except OSError as exc:
+            message = f"設定ファイル {CONFIG_FILE} を作成できません: {exc}"
+            self.logger.error(message)
+            raise RuntimeError(message) from exc
         self.logger.info("デフォルト設定ファイルを作成しました")
         self._config_parser = config
 
@@ -419,8 +473,18 @@ class SerialKeyboardEmulator:
             self.serial_config['port'] = port
             if self._config_parser and 'serial' in self._config_parser:
                 self._config_parser['serial']['port'] = port
-                with open(CONFIG_FILE, 'w') as f:
-                    self._config_parser.write(f)
+                try:
+                    ensure_storage_directory()
+                except RuntimeError as exc:
+                    self.logger.error(str(exc))
+                else:
+                    try:
+                        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                            self._config_parser.write(f)
+                    except OSError as exc:
+                        self.logger.error(
+                            f"設定ファイル {CONFIG_FILE} への書き込みに失敗しました: {exc}"
+                        )
 
         self.logger.info(f"シリアルポートを {port} に更新しました。再接続を実行します")
         self._reconnect_event.set()
@@ -445,13 +509,19 @@ class SerialKeyboardEmulator:
 
     def read_config(self):
         """設定ファイルを読み込む"""
+        try:
+            ensure_storage_directory()
+        except RuntimeError as exc:
+            self.logger.error(str(exc))
+            raise
+
         config = configparser.ConfigParser()
 
         if not os.path.exists(CONFIG_FILE):
             self.logger.warning("設定ファイルが見つかりません。デフォルト設定を作成します。")
             self.create_default_config()
 
-        config.read(CONFIG_FILE)
+        config.read(CONFIG_FILE, encoding='utf-8')
         self._config_parser = config
 
         try:
@@ -871,6 +941,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 

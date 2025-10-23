@@ -171,7 +171,7 @@ def backup_clipboard():
             return ClipboardBackupData(data_object.value, empty)
 
         last_error = hr & 0xFFFFFFFF
-        if hr == CLIPBRD_E_CANT_OPEN and time.time() < deadline:
+        if last_error == CLIPBRD_E_CANT_OPEN and time.time() < deadline:
             time.sleep(0.05)
             continue
 
@@ -552,8 +552,8 @@ class SerialKeyboardEmulator:
         if not data:
             return
 
-        self.logger.info(f"受信: {data}")␊
-        self.last_activity = time.time()␊
+        self.logger.info(f"受信: {data}")
+        self.last_activity = time.time()
 
         with self._lock:
             clipboard_backup = None
@@ -941,6 +941,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 

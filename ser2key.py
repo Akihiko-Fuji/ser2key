@@ -499,6 +499,27 @@ class SimpleIconImage:
         self.mode = mode
         self._data = bytes(data)
 
+    def copy(self):
+        return SimpleIconImage(self.width, self.height, self._data, mode=self.mode)
+
+    def resize(self, size, resample=None):
+        target_w, target_h = size
+        source_w, source_h = self.size
+        if (target_w, target_h) == (source_w, source_h):
+            return self.copy()
+
+        # 最近傍補間で縮小/拡大
+        resized = bytearray(target_w * target_h * 4)
+        data_rgba = self._to_rgba()
+        for y in range(target_h):
+            src_y = int(y * source_h / target_h)
+            for x in range(target_w):
+                src_x = int(x * source_w / target_w)
+                src_index = (src_y * source_w + src_x) * 4
+                dst_index = (y * target_w + x) * 4
+                resized[dst_index:dst_index + 4] = data_rgba[src_index:src_index + 4]
+        return SimpleIconImage(target_w, target_h, bytes(resized), mode='RGBA')
+
     def _to_rgba(self):
         if self.mode == 'RGBA':
             return self._data
@@ -507,6 +528,12 @@ class SimpleIconImage:
             for i in range(0, len(self._data), 4):
                 b, g, r, a = self._data[i:i + 4]
                 converted.extend((r, g, b, a))
+            return bytes(converted)
+        if self.mode == 'RGB':
+            converted = bytearray()
+            for i in range(0, len(self._data), 3):
+                r, g, b = self._data[i:i + 3]
+                converted.extend((r, g, b, 255))
             return bytes(converted)
         raise ValueError('サポートされていないモードです')
 
@@ -519,6 +546,12 @@ class SimpleIconImage:
                 r, g, b, a = self._data[i:i + 4]
                 converted.extend((b, g, r, a))
             return bytes(converted)
+        if self.mode == 'RGB':
+            converted = bytearray()
+            for i in range(0, len(self._data), 3):
+                r, g, b = self._data[i:i + 3]
+                converted.extend((b, g, r, 255))
+            return bytes(converted)
         raise ValueError('サポートされていないモードです')
 
     def convert(self, mode):
@@ -528,6 +561,13 @@ class SimpleIconImage:
             return SimpleIconImage(self.width, self.height, self._to_rgba(), mode='RGBA')
         if mode == 'BGRA':
             return SimpleIconImage(self.width, self.height, self._to_bgra(), mode='BGRA')
+        if mode == 'RGB':
+            rgba = self._to_rgba()
+            rgb = bytearray()
+            for i in range(0, len(rgba), 4):
+                r, g, b = rgba[i:i + 3]
+                rgb.extend((r, g, b))
+            return SimpleIconImage(self.width, self.height, bytes(rgb), mode='RGB')
         raise ValueError('サポートされていないモードです')
 
     def tobytes(self, *args):
@@ -538,6 +578,15 @@ class SimpleIconImage:
                 return self._to_bgra()
             if len(args) > 1 and args[1] == 'RGBA':
                 return self._to_rgba()
+            if len(args) > 1 and args[1] == 'RGB':
+                if self.mode == 'RGB':
+                    return self._data
+                rgba = self._to_rgba()
+                rgb = bytearray()
+                for i in range(0, len(rgba), 4):
+                    r, g, b = rgba[i:i + 3]
+                    rgb.extend((r, g, b))
+                return bytes(rgb)
         return self._to_rgba()
 
 
@@ -583,6 +632,35 @@ class TrayIconManager:
 
         return TrayIconManager.create_default_icon()
 
+
+def ensure_pystray_image_support():
+    """pystray が SimpleIconImage を扱えるようにパッチ適用"""
+    try:
+        from pystray import _base
+    except Exception:
+        return
+
+    try:
+        from pystray import _win32  # type: ignore
+    except Exception:
+        _win32 = None
+
+    def patch_icon_class(icon_cls):
+        if not hasattr(icon_cls, '_ser2key_image_patch') and hasattr(icon_cls, '_assert_image'):
+            original = icon_cls._assert_image
+
+            def _patched(self, image):
+                if isinstance(image, SimpleIconImage):
+                    return image
+                return original(self, image)
+
+            icon_cls._assert_image = _patched
+            icon_cls._ser2key_image_patch = True
+
+    patch_icon_class(_base.Icon)
+    if _win32 is not None:
+        patch_icon_class(_win32.Icon)
+
 def show_error_message(message):
     """エラーメッセージをポップアップで表示"""
     user32.MessageBoxW(None, str(message), "エラー", 0x00000010)
@@ -595,6 +673,7 @@ def main():
         emulator.read_config()
 
         # タスクトレイアイコンの設定
+        ensure_pystray_image_support()
         icon = pystray.Icon("ser2key")
         icon.icon = TrayIconManager.create_icon_image()
         icon.title = "ser2key - 初期化中"

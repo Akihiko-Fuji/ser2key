@@ -374,6 +374,7 @@ class SerialKeyboardEmulator:
 
         with self._lock:
             original_clipboard = None
+            clipboard_ready = False
             try:
                 original_clipboard = get_clipboard_text()
                 set_clipboard_text(data)
@@ -382,11 +383,15 @@ class SerialKeyboardEmulator:
                 while time.time() < timeout:
                     try:
                         if get_clipboard_text() == data:
+                            clipboard_ready = True
                             break
                     except ClipboardError:
                         time.sleep(0.05)
                         continue
                     time.sleep(0.05)
+
+                if not clipboard_ready:
+                    raise ClipboardError('クリップボードの内容が更新されませんでした')
 
                 send_ctrl_v(self.settings_config.get('add_enter', False))
             except ClipboardError as e:
@@ -395,6 +400,8 @@ class SerialKeyboardEmulator:
             except Exception as e:
                 self.logger.error(f"入力操作エラー: {e}")
                 self.error_count += 1
+            else:
+                self.error_count = 0
             finally:
                 try:
                     if original_clipboard is None:
@@ -424,6 +431,8 @@ class SerialKeyboardEmulator:
                     if self.tray_icon:
                         self.tray_icon.title = f"ser2key - 接続中 ({port})"
                     self.logger.info("シリアルポートに接続しました")
+                    with self._lock:
+                        self.error_count = 0
                     self._reconnect_event.clear()
 
                     buffer_data = []
@@ -434,7 +443,7 @@ class SerialKeyboardEmulator:
                             buffer_duration_ms = self.settings_config.get('buffer_msec', 0) if self.settings_config else 0
 
                         if buffer_duration_ms <= 0 and buffer_data:
-                            combined = ''.join(buffer_data)
+                            combined = '\n'.join(buffer_data)
                             if combined:
                                 self.process_serial_data(combined)
                             buffer_data = []
@@ -454,15 +463,17 @@ class SerialKeyboardEmulator:
                                     buffer_data.append(data)
                             except UnicodeDecodeError as e:
                                 self.logger.error(f"デコードエラー: {e}")
-                                self.error_count += 1
+                                with self._lock:
+                                    self.error_count += 1
                             except Exception as e:
                                 self.logger.error(f"予期せぬエラー: {e}")
-                                self.error_count += 1
+                                with self._lock:
+                                    self.error_count += 1
 
                         if buffer_duration_ms > 0 and buffer_start_time is not None:
                             elapsed = (time.monotonic() - buffer_start_time) * 1000
                             if elapsed >= buffer_duration_ms:
-                                combined = ''.join(buffer_data)
+                                combined = '\n'.join(buffer_data)
                                 if combined:
                                     self.process_serial_data(combined)
                                 buffer_data = []
@@ -471,7 +482,7 @@ class SerialKeyboardEmulator:
                         if self._reconnect_event.is_set():
                             self.logger.info("再接続要求を受け取りました")
                             if buffer_data:
-                                combined = ''.join(buffer_data)
+                                combined = '\n'.join(buffer_data)
                                 if combined:
                                     self.process_serial_data(combined)
                             buffer_data = []
@@ -481,7 +492,7 @@ class SerialKeyboardEmulator:
                         time.sleep(0.05)
 
                     if buffer_data:
-                        combined = ''.join(buffer_data)
+                        combined = '\n'.join(buffer_data)
                         if combined:
                             self.process_serial_data(combined)
 
@@ -489,13 +500,15 @@ class SerialKeyboardEmulator:
                 if self.tray_icon:
                     self.tray_icon.title = f"ser2key - 接続失敗 ({e})"
                 self.logger.error(f"シリアル通信エラー: {e}")
-                self.error_count += 1
+                with self._lock:
+                    self.error_count += 1
                 time.sleep(RECONNECT_DELAY)
             except Exception as e:
                 if self.tray_icon:
                     self.tray_icon.title = f"ser2key - エラー ({e})"
                 self.logger.error(f"予期せぬエラー: {e}")
-                self.error_count += 1
+                with self._lock:
+                    self.error_count += 1
                 time.sleep(RECONNECT_DELAY)
             finally:
                 if self.tray_icon and self.is_running:
@@ -522,7 +535,9 @@ class ApplicationMonitor:
                     self.logger.warning("長時間データ受信がありません")
 
                 # エラー回数チェック
-                if self.emulator.error_count >= MAX_ERRORS:
+                with self.emulator._lock:
+                    current_errors = self.emulator.error_count
+                if current_errors >= MAX_ERRORS:
                     self.logger.error("エラー回数が上限を超えました。アプリケーションを停止します")
                     self.emulator.cleanup()
                     break
@@ -746,3 +761,4 @@ def main():
 if __name__ == "__main__":
 
     main()
+

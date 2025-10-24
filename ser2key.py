@@ -514,9 +514,9 @@ class SerialKeyboardEmulator:
 
     def validate_serial_config(self, config):
         """シリアル通信の設定値を検証"""
-        valid_bauds = [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
-        if config['baudrate'] not in valid_bauds:
-            raise ValueError(f"不正なボーレート: {config['baudrate']}")
+        baudrate = config['baudrate']
+        if baudrate <= 0:
+            raise ValueError(f"不正なボーレート: {baudrate}")
 
         self.refresh_available_ports(update_menu=False)
         self.logger.info(f"利用可能なポート: {self.available_ports}")
@@ -628,9 +628,13 @@ class SerialKeyboardEmulator:
 
     def validate_settings_config(self, config):
         """一般設定の検証"""
-        valid_encodings = ['utf-8', 'sjis', 'ascii']
-        if config['encoding'].lower() not in valid_encodings:
-            raise ValueError(f"サポートされていないエンコーディング: {config['encoding']}")
+        encoding_name = config['encoding']
+        try:
+            normalized = codecs.lookup(encoding_name).name
+        except (LookupError, TypeError):
+            raise ValueError(f"サポートされていないエンコーディング: {encoding_name}")
+
+        config['encoding'] = normalized
 
     def read_config(self):
         """設定ファイルを読み込む"""
@@ -683,6 +687,12 @@ class SerialKeyboardEmulator:
 
             self.validate_serial_config(self.serial_config)
             self.validate_settings_config(self.settings_config)
+
+            if self._config_parser and self.config_path:
+                try:
+                    self._config_parser['settings']['encoding'] = self.settings_config['encoding']
+                except KeyError:
+                    pass
 
         except KeyError as e:
             raise KeyError(f"設定キーが見つかりません: {e}")
@@ -1093,6 +1103,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 

@@ -662,6 +662,7 @@ class SerialKeyboardEmulator:
         try:
             self.serial_config = {
                 'port': config['serial']['port'],
+                'baudrate': int(config['serial']['baudrate']),
                 'bytesize': int(config['serial']['bytesize']),
                 'parity': config['serial']['parity'],
                 'stopbits': int(config['serial']['stopbits']),
@@ -1092,6 +1093,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 

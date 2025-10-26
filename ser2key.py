@@ -108,13 +108,13 @@ user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 ole32 = ctypes.OleDLL('ole32')
 
-ole32.OleInitialize.restype = wintypes.HRESULT
+ole32.OleInitialize.restype = ctypes.c_long
 ole32.OleInitialize.argtypes = [ctypes.c_void_p]
-ole32.OleGetClipboard.restype = wintypes.HRESULT
+ole32.OleGetClipboard.restype = ctypes.c_long
 ole32.OleGetClipboard.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
-ole32.OleSetClipboard.restype = wintypes.HRESULT
+ole32.OleSetClipboard.restype = ctypes.c_long
 ole32.OleSetClipboard.argtypes = [ctypes.c_void_p]
-ole32.OleFlushClipboard.restype = wintypes.HRESULT
+ole32.OleFlushClipboard.restype = ctypes.c_long
 ole32.OleFlushClipboard.argtypes = []
 
 S_OK = 0
@@ -1103,6 +1103,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 

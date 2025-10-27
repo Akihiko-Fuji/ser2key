@@ -67,6 +67,34 @@ footer=\r\n--\n
 ✅ Windows（テスト済み）– システムトレイ対応
 🔌 あらゆるシリアルデバイスに対応 – Windows 上で COM ポートとして認識される RS-232C、USB シリアルアダプタ、Bluetooth SPP など。
 
+### 💻 参考:コンパイルオプション
+```bat
+python -m nuitka ^
+    --mingw64 ^
+    --onefile ^
+    --remove-output ^
+    --assume-yes-for-downloads ^
+    --clean-cache=all ^
+    --enable-plugin=anti-bloat ^
+    --disable-plugin=pylint-warnings ^
+    --include-data-file=f.png=f.png ^
+    --windows-icon-from-ico=f.ico ^
+    --windows-company-name="Akihiko Fujita" ^
+    --windows-product-name="Serial to Keyboard" ^
+    --windows-file-version="1.5.0.0" ^
+    --windows-product-version="1.5.0.0" ^
+    --windows-file-description="Serial to Keyboard Converter" ^
+    --windows-console-mode=disable ^
+    --python-flag=no_site ^
+    --python-flag=no_warnings ^
+    --python-flag=no_docstrings ^
+    --nofollow-import-to=PIL ^
+    --include-module=pystray._win32 ^
+    --include-module=pystray._base ^
+    ser2key.py
+```
+
+
 ### 🆙 更新履歴
 1.5
 不具合修正。クリップボード周りの処理の不具合を見直し、Windows以外の環境で動作させた場合、安全に停止するようにしました。

@@ -861,6 +861,7 @@ class SerialKeyboardEmulator:
                 if self.is_running:
                     time.sleep(1)
 
+
 class ApplicationMonitor:
     """アプリケーションの状態を監視するクラス"""
 
@@ -888,6 +889,7 @@ class ApplicationMonitor:
 
             except Exception as e:
                 self.logger.error(f"モニタリングエラー: {e}")
+
 
 class SimpleIconImage:
     """Pillow 非依存で pystray が扱えるシンプルな画像表現"""
@@ -1078,66 +1080,60 @@ def launch_tray_proxy():
     except Exception as e:
         logging.getLogger('ser2key').warning(f"トレイプロキシ起動失敗: {e}")
 
+
 def main():
     """メイン処理"""
-    import subprocess
     logger = logging.getLogger('ser2key')
 
-    def launch_tray_proxy():
-        # 管理者権限時は通常権限プロセスでトレイアイコンを表示
-        try:
-            exe_path = os.path.abspath(sys.argv[0])
-            subprocess.Popen(
-                ['cmd', '/c', 'start', '', exe_path, '--tray-proxy'],
-                shell=False,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-        except Exception as e:
-            logger.warning(f"トレイプロキシ起動失敗: {e}")
+    # --- 多重起動防止処理 ---
+    mutex_name = "Global\\ser2key_mutex"
+    kernel32 = ctypes.windll.kernel32
+    mutex = kernel32.CreateMutexW(None, False, mutex_name)
+    last_error = kernel32.GetLastError()
+    ERROR_ALREADY_EXISTS = 183
 
-    # トレイプロキシとして起動された場合
-    if '--tray-proxy' in sys.argv:
-        ensure_pystray_image_support()
-        icon = pystray.Icon("ser2key")
-        icon.icon = TrayIconManager.create_icon_image()
-        icon.title = "ser2key - 実行中"
-        icon.menu = pystray.Menu(item('終了', lambda icon, item: icon.stop()))
-        icon.run()
-        return
+    if last_error == ERROR_ALREADY_EXISTS:
+        show_error_message("すでに ser2key が起動中です。")
+        sys.exit(0)
+    # ---------------------------------
 
     try:
         emulator = SerialKeyboardEmulator()
         emulator.read_config()
 
-        # 管理者権限チェック
-        try:
-            is_admin = ctypes.windll.shell32.IsUserAnAdmin()
-        except Exception:
-            is_admin = False
+        # --- COM初期化済みトレイスレッド関数 ---
+        def tray_thread():
+            try:
+                ole32.OleInitialize(None)  # COM初期化（管理者権限でも安定）
+                ensure_pystray_image_support()
+                icon = pystray.Icon("ser2key")
+                icon.icon = TrayIconManager.create_icon_image()
+                icon.title = "ser2key - 初期化中"
 
-        if is_admin:
-            # 管理者権限時はトレイを別プロセスで表示
-            launch_tray_proxy()
-        else:
-            # 通常権限時はこのプロセスでトレイを表示
-            ensure_pystray_image_support()
-            icon = pystray.Icon("ser2key")
-            icon.icon = TrayIconManager.create_icon_image()
-            icon.title = "ser2key - 初期化中"
-            emulator.refresh_available_ports(update_menu=False)
-            emulator.attach_tray_icon(icon)
-            threading.Thread(target=icon.run, daemon=True).start()
+                emulator.refresh_available_ports(update_menu=False)
+                emulator.attach_tray_icon(icon)
 
-        # モニタリングスレッドの開始
+                icon.run()
+            except Exception as e:
+                logger.error(f"トレイアイコンスレッドエラー: {e}")
+            finally:
+                try:
+                    ole32.OleUninitialize()
+                except Exception:
+                    pass
+
+        # --- トレイスレッド起動 ---
+        tray_thread_obj = threading.Thread(target=tray_thread, daemon=True)
+        tray_thread_obj.start()
+
+        # モニタリングスレッド
         monitor = ApplicationMonitor(emulator)
-        monitor_thread = threading.Thread(target=monitor.monitor, daemon=True)
-        monitor_thread.start()
+        threading.Thread(target=monitor.monitor, daemon=True).start()
 
-        # シリアル通信スレッドの開始
-        serial_thread = threading.Thread(target=emulator.read_serial_and_type, daemon=True)
-        serial_thread.start()
+        # シリアル通信スレッド
+        threading.Thread(target=emulator.read_serial_and_type, daemon=True).start()
 
-        # 管理者権限で実行中はトレイが別プロセスなので待機ループを回す
+        # メインループ（待機）
         while emulator.is_running:
             time.sleep(1)
 
@@ -1149,20 +1145,12 @@ def main():
         if 'emulator' in locals():
             emulator.cleanup()
 
+        # --- ミューテックス解放 ---
+        if mutex:
+            kernel32.ReleaseMutex(mutex)
+            kernel32.CloseHandle(mutex)
+
 if __name__ == "__main__":
 
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
 

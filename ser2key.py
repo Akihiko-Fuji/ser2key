@@ -37,7 +37,7 @@ from contextlib import contextmanager
 import codecs
 import re
 from datetime import datetime
-
+import subprocess
 
 if os.name != 'nt':
     raise OSError('ser2key は Windows 専用のアプリケーションです。')
@@ -1065,21 +1065,68 @@ def show_error_message(message):
     """エラーメッセージをポップアップで表示"""
     user32.MessageBoxW(None, str(message), "エラー", 0x00000010)
 
+def launch_tray_proxy():
+    """管理者権限時は通常権限プロセスでトレイアイコンを表示"""
+    try:
+        # 標準ユーザーで同じEXEを起動（UAC昇格せず）
+        exe_path = os.path.abspath(sys.argv[0])
+        subprocess.Popen(
+            ['cmd', '/c', 'start', '', exe_path, '--tray-proxy'],
+            shell=False,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+    except Exception as e:
+        logging.getLogger('ser2key').warning(f"トレイプロキシ起動失敗: {e}")
+
 def main():
     """メイン処理"""
+    import subprocess
     logger = logging.getLogger('ser2key')
+
+    def launch_tray_proxy():
+        # 管理者権限時は通常権限プロセスでトレイアイコンを表示
+        try:
+            exe_path = os.path.abspath(sys.argv[0])
+            subprocess.Popen(
+                ['cmd', '/c', 'start', '', exe_path, '--tray-proxy'],
+                shell=False,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+        except Exception as e:
+            logger.warning(f"トレイプロキシ起動失敗: {e}")
+
+    # トレイプロキシとして起動された場合
+    if '--tray-proxy' in sys.argv:
+        ensure_pystray_image_support()
+        icon = pystray.Icon("ser2key")
+        icon.icon = TrayIconManager.create_icon_image()
+        icon.title = "ser2key - 実行中"
+        icon.menu = pystray.Menu(item('終了', lambda icon, item: icon.stop()))
+        icon.run()
+        return
+
     try:
         emulator = SerialKeyboardEmulator()
         emulator.read_config()
 
-        # タスクトレイアイコンの設定
-        ensure_pystray_image_support()
-        icon = pystray.Icon("ser2key")
-        icon.icon = TrayIconManager.create_icon_image()
-        icon.title = "ser2key - 初期化中"
+        # 管理者権限チェック
+        try:
+            is_admin = ctypes.windll.shell32.IsUserAnAdmin()
+        except Exception:
+            is_admin = False
 
-        emulator.refresh_available_ports(update_menu=False)
-        emulator.attach_tray_icon(icon)
+        if is_admin:
+            # 管理者権限時はトレイを別プロセスで表示
+            launch_tray_proxy()
+        else:
+            # 通常権限時はこのプロセスでトレイを表示
+            ensure_pystray_image_support()
+            icon = pystray.Icon("ser2key")
+            icon.icon = TrayIconManager.create_icon_image()
+            icon.title = "ser2key - 初期化中"
+            emulator.refresh_available_ports(update_menu=False)
+            emulator.attach_tray_icon(icon)
+            threading.Thread(target=icon.run, daemon=True).start()
 
         # モニタリングスレッドの開始
         monitor = ApplicationMonitor(emulator)
@@ -1090,7 +1137,9 @@ def main():
         serial_thread = threading.Thread(target=emulator.read_serial_and_type, daemon=True)
         serial_thread.start()
 
-        icon.run()
+        # 管理者権限で実行中はトレイが別プロセスなので待機ループを回す
+        while emulator.is_running:
+            time.sleep(1)
 
     except Exception as e:
         logger.error(f"アプリケーションエラー: {e}")
@@ -1103,6 +1152,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 

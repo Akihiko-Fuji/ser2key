@@ -1025,12 +1025,23 @@ class TrayIconManager:
     @staticmethod
     def create_icon_image():
         """アイコン画像を作成または読み込む"""
-        image_path = os.path.join(sys._MEIPASS, ICON_FILE) if hasattr(sys, '_MEIPASS') else ICON_FILE
+        candidate_paths = []
 
-        if os.path.exists(image_path):
-            pillow_image = TrayIconManager._load_with_pillow(image_path)
-            if pillow_image is not None:
-                return pillow_image
+        # PyInstaller 互換の _MEIPASS があれば最優先で使用
+        if hasattr(sys, '_MEIPASS'):
+            candidate_paths.append(os.path.join(sys._MEIPASS, ICON_FILE))
+
+        # 実行ファイルと同じ場所に展開されたデータファイルを優先的に参照
+        candidate_paths.append(os.path.join(APP_DIR, ICON_FILE))
+
+        # カレントディレクトリにもあれば参照（デバッグ実行などを考慮）
+        candidate_paths.append(os.path.abspath(ICON_FILE))
+
+        for image_path in candidate_paths:
+            if os.path.exists(image_path):
+                pillow_image = TrayIconManager._load_with_pillow(image_path)
+                if pillow_image is not None:
+                    return pillow_image
 
         return TrayIconManager.create_default_icon()
 
@@ -1153,4 +1164,5 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 

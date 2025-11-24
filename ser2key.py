@@ -430,9 +430,48 @@ class SerialKeyboardEmulator:
         footer = self._render_template(footer_template, now)
         return f"{header}{payload}{footer}"
 
+    def _wait_clipboard_update(self, expected_text):
+        deadline = time.time() + CLIPBOARD_TIMEOUT
+        while time.time() < deadline:
+            try:
+                if get_clipboard_text() == expected_text:
+                    return True
+            except ClipboardError:
+                time.sleep(0.05)
+                continue
+            time.sleep(0.05)
+        return False
+
+    def _restore_clipboard_safely(self, clipboard_backup):
+        try:
+            restore_clipboard(clipboard_backup)
+        except ClipboardError:
+            self.logger.warning("クリップボードの復元に失敗しました")
+
+    def _update_error_state(self, success):
+        with self._lock:
+            if success:
+                self.error_count = 0
+            else:
+                self.error_count += 1
+
+    def _apply_clipboard_and_paste(self, formatted_payload, add_enter):
+        clipboard_backup = None
+        try:
+            clipboard_backup = backup_clipboard()
+            set_clipboard_text(formatted_payload)
+
+            if not self._wait_clipboard_update(formatted_payload):
+                raise ClipboardError('クリップボードの内容が更新されませんでした')
+
+            send_ctrl_v(add_enter)
+        finally:
+            self._restore_clipboard_safely(clipboard_backup)
+
     def _wait_for_stop_or_reconnect(self, timeout):
         """終了要求または再接続要求を監視しながら待機"""
         end_time = time.time() + timeout
+
         while self.is_running and time.time() < end_time:
             remaining = end_time - time.time()
             wait_time = min(0.1, remaining)
@@ -714,44 +753,16 @@ class SerialKeyboardEmulator:
         with self._lock:
             add_enter = self.settings_config.get('add_enter', False) if self.settings_config else False
 
-        clipboard_backup = None
-        clipboard_ready = False
-
         try:
-            clipboard_backup = backup_clipboard()
-            set_clipboard_text(formatted_payload)
-
-            timeout = time.time() + CLIPBOARD_TIMEOUT
-            while time.time() < timeout:
-                try:
-                    if get_clipboard_text() == formatted_payload:
-                        clipboard_ready = True
-                        break
-                except ClipboardError:
-                    time.sleep(0.05)
-                    continue
-                time.sleep(0.05)
-
-            if not clipboard_ready:
-                raise ClipboardError('クリップボードの内容が更新されませんでした')
-
-            send_ctrl_v(add_enter)
+            self._apply_clipboard_and_paste(formatted_payload, add_enter)
         except ClipboardError as e:
             self.logger.error(f"クリップボード操作エラー: {e}")
-            with self._lock:
-                self.error_count += 1
+            self._update_error_state(False)
         except Exception as e:
             self.logger.error(f"入力操作エラー: {e}")
-            with self._lock:
-                self.error_count += 1
+            self._update_error_state(False)
         else:
-            with self._lock:
-                self.error_count = 0
-        finally:
-            try:
-                restore_clipboard(clipboard_backup)
-            except ClipboardError:
-                self.logger.warning("クリップボードの復元に失敗しました")
+            self._update_error_state(True)
 
     def read_serial_and_type(self):
         """シリアルポートからデータを読み取り、キーボード入力に変換"""
@@ -1164,5 +1175,6 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 

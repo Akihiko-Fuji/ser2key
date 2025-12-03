@@ -45,14 +45,42 @@ if os.name != 'nt':
 
 # 定数定義
 DEFAULT_ICON_SIZE = (32, 32)
-ICON_FILE = 'f.png'
+ICON_FILES = ['f.ico', 'f.png']
 APP_NAME = 'ser2key'
 
 
+# Nuitka のワンファイル実行時に設定されるパス情報を取得
+def _get_nuitka_onefile_dirs():
+    dirs = []
+    # 解凍先ディレクトリ（同梱データはここに展開される）
+    temp_dir = os.environ.get('NUITKA_ONEFILE_TEMP')
+    if temp_dir:
+        dirs.append(os.path.abspath(temp_dir))
+
+    # 元の実行ファイルが存在するディレクトリ（config.ini をここに置く想定）
+    parent_dir = os.environ.get('NUITKA_ONEFILE_PARENT')
+    if parent_dir:
+        dirs.append(os.path.abspath(parent_dir))
+
+    return dirs
+
+
+# Nuitka Onefile の場合は、元の実行ファイルの配置場所を最優先で返す
 def _get_executable_directory():
+    nuitka_dirs = _get_nuitka_onefile_dirs()
+    if nuitka_dirs:
+        return nuitka_dirs[-1]
+
+    # 起動時のコマンドラインに含まれるパス（実行ファイルが置かれているディレクトリ）
+    argv_dir = os.path.dirname(os.path.abspath(sys.argv[0])) if sys.argv else ''
+
+    # frozen 実行時は sys.executable が展開先を指すことがあるため argv ベースを優先
     if getattr(sys, 'frozen', False):
+        if argv_dir:
+            return argv_dir
         return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.abspath(__file__))
+
+    return argv_dir or os.path.dirname(os.path.abspath(__file__))
 
 
 def _get_storage_directory():
@@ -140,8 +168,8 @@ class ClipboardBackupData:
         self.data_object = data_object
         self.is_empty = is_empty
 
+    # COM オブジェクトの参照カウントを解放
     def release(self):
-        """COM オブジェクトの参照カウントを解放"""
         if self.data_object:
             obj_ptr = ctypes.cast(ctypes.c_void_p(self.data_object), ctypes.POINTER(_IUnknown))
             release = obj_ptr.contents.lpVtbl.contents.Release
@@ -152,8 +180,8 @@ class ClipboardBackupData:
 _ole_thread_state = threading.local()
 
 
+# 現在のスレッドで OLE を初期化
 def ensure_ole_initialized():
-    """現在のスレッドで OLE を初期化"""
     if getattr(_ole_thread_state, 'initialized', False):
         return
 
@@ -164,8 +192,8 @@ def ensure_ole_initialized():
     _ole_thread_state.initialized = True
 
 
+# クリップボードが空であるか確認
 def is_clipboard_empty():
-    """クリップボードが空であるか確認"""
     try:
         with open_clipboard():
             kernel32.SetLastError(0)
@@ -177,8 +205,8 @@ def is_clipboard_empty():
     return False
 
 
+# クリップボードの全データを退避
 def backup_clipboard():
-    """クリップボードの全データを退避"""
     ensure_ole_initialized()
 
     empty = is_clipboard_empty()
@@ -204,8 +232,9 @@ def backup_clipboard():
             f"クリップボードの退避に失敗しました (HRESULT=0x{last_error:08X})"
         )
 
+
+# 退避したクリップボード内容を復元
 def restore_clipboard(backup):
-    """退避したクリップボード内容を復元"""
     if not backup:
         return
 
@@ -227,8 +256,8 @@ class ClipboardError(Exception):
 
 
 @contextmanager
+# クリップボードを安全に開くためのコンテキストマネージャ
 def open_clipboard():
-    """クリップボードを安全に開くためのコンテキストマネージャ"""
     deadline = time.time() + CLIPBOARD_TIMEOUT
     opened = False
     while time.time() < deadline:
@@ -246,8 +275,8 @@ def open_clipboard():
             user32.CloseClipboard()
 
 
+# 現在のクリップボード文字列を取得
 def get_clipboard_text():
-    """現在のクリップボード文字列を取得"""
     with open_clipboard():
         handle = user32.GetClipboardData(CF_UNICODETEXT)
         if not handle:
@@ -262,8 +291,8 @@ def get_clipboard_text():
         return data
 
 
+# クリップボードに文字列を設定
 def set_clipboard_text(text):
-    """クリップボードに文字列を設定"""
     if text is None:
         return clear_clipboard()
 
@@ -290,21 +319,21 @@ def set_clipboard_text(text):
             raise ClipboardError('クリップボードへの設定に失敗しました')
 
 
+# クリップボードを空にする
 def clear_clipboard():
-    """クリップボードを空にする"""
     with open_clipboard():
         user32.EmptyClipboard()
 
 
+# キーイベントを送信
 def _key_event(vk_code, key_up=False):
-    """キーイベントを送信"""
     scan_code = user32.MapVirtualKeyW(vk_code, 0)
     flags = KEYEVENTF_KEYUP if key_up else 0
     user32.keybd_event(vk_code, scan_code, flags, 0)
 
 
+# Ctrl+V と必要に応じて Enter キーを送信
 def send_ctrl_v(add_enter=False):
-    """Ctrl+V と必要に応じて Enter キーを送信"""
     _key_event(VK_CONTROL)
     _key_event(VK_V)
     _key_event(VK_V, key_up=True)
@@ -316,8 +345,8 @@ def send_ctrl_v(add_enter=False):
         _key_event(VK_RETURN, key_up=True)
 
 
+# ログ設定を初期化
 def setup_logging():
-    """ログ設定を初期化"""
     try:
         ensure_storage_directory()
     except RuntimeError as exc:
@@ -468,8 +497,9 @@ class SerialKeyboardEmulator:
         finally:
             self._restore_clipboard_safely(clipboard_backup)
 
+
+    # 終了要求または再接続要求を監視しながら待機
     def _wait_for_stop_or_reconnect(self, timeout):
-        """終了要求または再接続要求を監視しながら待機"""
         end_time = time.time() + timeout
 
         while self.is_running and time.time() < end_time:
@@ -480,8 +510,9 @@ class SerialKeyboardEmulator:
             if self._reconnect_event.wait(wait_time):
                 break
 
+
+    # リソースの解放処理
     def cleanup(self):
-        """リソースの解放処理"""
         self.is_running = False
         self._reconnect_event.set()
 
@@ -501,8 +532,9 @@ class SerialKeyboardEmulator:
             except Exception as exc:
                 self.logger.debug(f"トレイアイコン停止時の例外: {exc}")
 
+
+    # デフォルト設定ファイルの作成
     def create_default_config(self):
-        """デフォルト設定ファイルの作成"""
         config = configparser.ConfigParser()
 
         config['serial'] = {
@@ -551,8 +583,9 @@ class SerialKeyboardEmulator:
         ) or '未知の理由'
         raise RuntimeError(f"設定ファイルを作成できませんでした ({message})")
 
+
+    # シリアル通信の設定値を検証
     def validate_serial_config(self, config):
-        """シリアル通信の設定値を検証"""
         baudrate = config['baudrate']
         if baudrate <= 0:
             raise ValueError(f"不正なボーレート: {baudrate}")
@@ -564,8 +597,9 @@ class SerialKeyboardEmulator:
             self.logger.warning(f"設定されたポート {config['port']} は現在利用可能なポート一覧にありません")
             # ここでもエラーは発生させず、警告のみ
 
+
+    # 利用可能なシリアルポート一覧を更新
     def refresh_available_ports(self, update_menu=True):
-        """利用可能なシリアルポート一覧を更新"""
         ports = [port.device for port in list_ports.comports()]
         ports.sort()
         self.available_ports = ports
@@ -574,19 +608,22 @@ class SerialKeyboardEmulator:
         if update_menu and self.tray_icon:
             self.update_tray_menu()
 
+
+    # タスクトレイアイコンを関連付け
     def attach_tray_icon(self, icon):
-        """タスクトレイアイコンを関連付け"""
         self.tray_icon = icon
         self.update_tray_menu()
 
+
+    # 現在選択されているポートかどうかを判定
     def _is_selected_port(self, port):
-        """現在選択されているポートかどうかを判定"""
         with self._lock:
             current = self.serial_config.get('port') if self.serial_config else None
         return current == port
 
+
+    # タスクトレイメニューを更新
     def update_tray_menu(self):
-        """タスクトレイメニューを更新"""
         if not self.tray_icon:
             return
 
@@ -632,8 +669,9 @@ class SerialKeyboardEmulator:
         except Exception as e:
             self.logger.error(f"トレイメニュー更新エラー: {e}")
 
+
+    # 利用するシリアルポートを更新し再接続を要求
     def update_serial_port(self, port):
-        """利用するシリアルポートを更新し再接続を要求"""
         if not self.serial_config:
             self.logger.error("シリアル設定が初期化されていません")
             return
@@ -660,13 +698,15 @@ class SerialKeyboardEmulator:
         self._reconnect_event.set()
         self.update_tray_menu()
 
+
+    # アプリケーション終了処理
     def stop_application(self, icon, menu_item=None):
-        """アプリケーション終了処理"""
         self.logger.info("ユーザー操作によりアプリケーションを終了します")
         self.cleanup()
 
+
+    # 一般設定の検証
     def validate_settings_config(self, config):
-        """一般設定の検証"""
         encoding_name = config['encoding']
         try:
             normalized = codecs.lookup(encoding_name).name
@@ -675,8 +715,9 @@ class SerialKeyboardEmulator:
 
         config['encoding'] = normalized
 
+
+    # 設定ファイルを読み込む
     def read_config(self):
-        """設定ファイルを読み込む"""
         config_path = self._resolve_config_path()
 
         if not os.path.exists(config_path):
@@ -738,8 +779,8 @@ class SerialKeyboardEmulator:
         except ValueError as e:
             raise ValueError(f"不正な設定値です: {e}")
 
+    # シリアルデータを処理してキーボード入力をシミュレート
     def process_serial_data(self, data):
-        """シリアルデータを処理してキーボード入力をシミュレート"""
         if not data:
             return
 
@@ -764,8 +805,8 @@ class SerialKeyboardEmulator:
         else:
             self._update_error_state(True)
 
+    # シリアルポートからデータを読み取り、キーボード入力に変換
     def read_serial_and_type(self):
-        """シリアルポートからデータを読み取り、キーボード入力に変換"""
         while self.is_running:
             try:
                 with self._lock:
@@ -880,8 +921,8 @@ class ApplicationMonitor:
         self.emulator = emulator
         self.logger = logging.getLogger('ser2key.monitor')
 
+    # 定期的な状態確認
     def monitor(self):
-        """定期的な状態確認"""
         while self.emulator.is_running:
             try:
                 # アクティビティタイムアウトチェック
@@ -1007,8 +1048,8 @@ class TrayIconManager:
     """タスクトレイアイコンを管理するクラス"""
 
     @staticmethod
+    # デフォルトアイコンを作成
     def create_default_icon():
-        """デフォルトアイコンを作成"""
         width, height = DEFAULT_ICON_SIZE
         data = bytearray()
         for y in range(height):
@@ -1034,19 +1075,31 @@ class TrayIconManager:
             return None
 
     @staticmethod
+    # アイコン画像を作成または読み込む
     def create_icon_image():
-        """アイコン画像を作成または読み込む"""
         candidate_paths = []
 
         # PyInstaller 互換の _MEIPASS があれば最優先で使用
         if hasattr(sys, '_MEIPASS'):
-            candidate_paths.append(os.path.join(sys._MEIPASS, ICON_FILE))
+            candidate_paths.extend(
+                os.path.join(sys._MEIPASS, icon_file) for icon_file in ICON_FILES
+            )
+
+        # Nuitka Onefile で解凍されたデータパスを優先的に参照
+        for onefile_dir in _get_nuitka_onefile_dirs():
+            candidate_paths.extend(
+                os.path.join(onefile_dir, icon_file) for icon_file in ICON_FILES
+            )
 
         # 実行ファイルと同じ場所に展開されたデータファイルを優先的に参照
-        candidate_paths.append(os.path.join(APP_DIR, ICON_FILE))
+        candidate_paths.extend(
+            os.path.join(APP_DIR, icon_file) for icon_file in ICON_FILES
+        )
 
         # カレントディレクトリにもあれば参照（デバッグ実行などを考慮）
-        candidate_paths.append(os.path.abspath(ICON_FILE))
+        candidate_paths.extend(
+            os.path.abspath(icon_file) for icon_file in ICON_FILES
+        )
 
         for image_path in candidate_paths:
             if os.path.exists(image_path):
@@ -1057,8 +1110,8 @@ class TrayIconManager:
         return TrayIconManager.create_default_icon()
 
 
+# pystray が SimpleIconImage を扱えるようにパッチ適用
 def ensure_pystray_image_support():
-    """pystray が SimpleIconImage を扱えるようにパッチ適用"""
     try:
         from pystray import _base
     except Exception:
@@ -1085,12 +1138,14 @@ def ensure_pystray_image_support():
     if _win32 is not None:
         patch_icon_class(_win32.Icon)
 
+
+# エラーメッセージをポップアップで表示
 def show_error_message(message):
-    """エラーメッセージをポップアップで表示"""
     user32.MessageBoxW(None, str(message), "エラー", 0x00000010)
 
+
+# 管理者権限時は通常権限プロセスでトレイアイコンを表示
 def launch_tray_proxy():
-    """管理者権限時は通常権限プロセスでトレイアイコンを表示"""
     try:
         # 標準ユーザーで同じEXEを起動（UAC昇格せず）
         exe_path = os.path.abspath(sys.argv[0])
@@ -1103,8 +1158,8 @@ def launch_tray_proxy():
         logging.getLogger('ser2key').warning(f"トレイプロキシ起動失敗: {e}")
 
 
+# メイン処理
 def main():
-    """メイン処理"""
     logger = logging.getLogger('ser2key')
 
     # --- 多重起動防止処理 ---
@@ -1175,7 +1230,4 @@ def main():
 if __name__ == "__main__":
 
     main()
-
-
-
 

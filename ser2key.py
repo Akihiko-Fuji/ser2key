@@ -53,6 +53,12 @@ BYTESIZE_OPTIONS = [5, 6, 7, 8]
 PARITY_OPTIONS = ['N', 'E', 'O', 'M', 'S']
 STOPBITS_OPTIONS = [1, 1.5, 2]
 TIMEOUT_OPTIONS = [0.1, 0.5, 1, 2, 5]
+ENCODING_OPTIONS = ['shift_jis', 'ascii', 'utf-8']
+ENCODING_LABELS = {
+    'shift_jis': 'Shift-JIS',
+    'ascii': 'ASCII',
+    'utf-8': 'UTF-8',
+}
 
 
 # Nuitka のワンファイル実行時に設定されるパス情報を取得
@@ -102,15 +108,22 @@ CONFIG_CANDIDATE_PATHS = [
     os.path.join(APP_DIR, 'config.ini'),
     os.path.join(STORAGE_DIR, 'config.ini'),
 ]
-LOG_FILE = os.path.join(STORAGE_DIR, 'ser2key.log')
+LOG_FILENAME = 'ser2key.log'
 
 
-def ensure_storage_directory():
+def _get_preferred_storage_dir():
+    if os.path.exists(CONFIG_CANDIDATE_PATHS[0]):
+        return APP_DIR
+    return STORAGE_DIR
+
+
+def ensure_storage_directory(storage_dir=None):
+    target_dir = storage_dir or STORAGE_DIR
     try:
-        os.makedirs(STORAGE_DIR, exist_ok=True)
+        os.makedirs(target_dir, exist_ok=True)
     except OSError as exc:
         raise RuntimeError(
-            f'設定保存用ディレクトリ {STORAGE_DIR} を作成できません: {exc}'
+            f'設定保存用ディレクトリ {target_dir} を作成できません: {exc}'
         ) from exc
 
 
@@ -382,15 +395,18 @@ def send_ctrl_v(add_enter=False):
 
 # ログ設定を初期化
 def setup_logging():
+    storage_dir = _get_preferred_storage_dir()
     try:
-        ensure_storage_directory()
+        if storage_dir == STORAGE_DIR:
+            ensure_storage_directory(storage_dir=storage_dir)
     except RuntimeError as exc:
         raise RuntimeError(str(exc)) from exc
 
     logger = logging.getLogger('ser2key')
     logger.setLevel(logging.INFO)
 
-    log_path = os.path.abspath(LOG_FILE)
+    log_file = os.path.join(storage_dir, LOG_FILENAME)
+    log_path = os.path.abspath(log_file)
     handler_exists = any(
         isinstance(handler, RotatingFileHandler) and
         getattr(handler, 'baseFilename', None) == log_path
@@ -399,7 +415,7 @@ def setup_logging():
 
     if not handler_exists:
         handler = RotatingFileHandler(
-            LOG_FILE,
+            log_file,
             maxBytes=512*1024,
             backupCount=3,
             encoding='utf-8'
@@ -583,7 +599,7 @@ class SerialKeyboardEmulator:
         
         config['settings'] = {
             'add_enter': 'true',
-            'encoding': 'sjis',
+            'encoding': 'shift_jis',
             'buffer_msec': '0'
         }
 
@@ -679,10 +695,12 @@ class SerialKeyboardEmulator:
                 return f"{formatted} {unit}"
             return formatted
 
-        def build_serial_option_menu(label, key, options, unit=None):
+        def build_option_menu(label, key, options, unit=None, config_getter=None, update_handler=None, formatter=None):
+            if config_getter is None or update_handler is None:
+                raise ValueError("config_getter と update_handler は必須です")
+
             def get_current():
-                with self._lock:
-                    return self.serial_config.get(key) if self.serial_config else None
+                return config_getter(key)
 
             current = get_current()
             option_values = ensure_option_in_list(options, current)
@@ -690,7 +708,7 @@ class SerialKeyboardEmulator:
             for option in option_values:
                 def make_action(value):
                     def select_action(icon, menu_item):
-                        self.update_serial_setting(key, value)
+                        update_handler(key, value)
 
                     return select_action
 
@@ -700,9 +718,10 @@ class SerialKeyboardEmulator:
 
                     return is_checked
 
+                label_text = formatter(option) if formatter else format_value(option, unit=unit)
                 menu_items.append(
                     item(
-                        format_value(option, unit=unit),
+                        label_text,
                         make_action(option),
                         checked=make_checked(option)
                     )
@@ -710,6 +729,17 @@ class SerialKeyboardEmulator:
             if not menu_items:
                 menu_items.append(item('選択肢なし', None, enabled=False))
             return item(label, pystray.Menu(*menu_items))
+
+        def get_serial_current(key):
+            with self._lock:
+                return self.serial_config.get(key) if self.serial_config else None
+
+        def get_settings_current(key):
+            with self._lock:
+                return self.settings_config.get(key) if self.settings_config else None
+
+        def format_encoding(value):
+            return ENCODING_LABELS.get(value, value)
 
         menu_definition = [
             item('ポート一覧を更新', refresh_ports_action),
@@ -745,11 +775,55 @@ class SerialKeyboardEmulator:
             item(
                 'シリアル設定',
                 pystray.Menu(
-                    build_serial_option_menu('ボーレート', 'baudrate', BAUDRATE_OPTIONS),
-                    build_serial_option_menu('データ長', 'bytesize', BYTESIZE_OPTIONS),
-                    build_serial_option_menu('パリティ', 'parity', PARITY_OPTIONS),
-                    build_serial_option_menu('ストップビット', 'stopbits', STOPBITS_OPTIONS),
-                    build_serial_option_menu('タイムアウト', 'timeout', TIMEOUT_OPTIONS, unit='秒'),
+                    build_option_menu(
+                        'ボーレート',
+                        'baudrate',
+                        BAUDRATE_OPTIONS,
+                        config_getter=get_serial_current,
+                        update_handler=self.update_serial_setting
+                    ),
+                    build_option_menu(
+                        'データ長',
+                        'bytesize',
+                        BYTESIZE_OPTIONS,
+                        config_getter=get_serial_current,
+                        update_handler=self.update_serial_setting
+                    ),
+                    build_option_menu(
+                        'パリティ',
+                        'parity',
+                        PARITY_OPTIONS,
+                        config_getter=get_serial_current,
+                        update_handler=self.update_serial_setting
+                    ),
+                    build_option_menu(
+                        'ストップビット',
+                        'stopbits',
+                        STOPBITS_OPTIONS,
+                        config_getter=get_serial_current,
+                        update_handler=self.update_serial_setting
+                    ),
+                    build_option_menu(
+                        'タイムアウト',
+                        'timeout',
+                        TIMEOUT_OPTIONS,
+                        unit='秒',
+                        config_getter=get_serial_current,
+                        update_handler=self.update_serial_setting
+                    ),
+                )
+            ),
+            item(
+                'デコード設定',
+                pystray.Menu(
+                    build_option_menu(
+                        '文字コード',
+                        'encoding',
+                        ENCODING_OPTIONS,
+                        config_getter=get_settings_current,
+                        update_handler=self.update_settings_setting,
+                        formatter=format_encoding
+                    ),
                 )
             ),
             pystray.Menu.SEPARATOR,
@@ -820,6 +894,41 @@ class SerialKeyboardEmulator:
 
         self.logger.info(f"{key} を {value} に更新しました。再接続を実行します")
         self._reconnect_event.set()
+        self.update_tray_menu()
+
+
+    # 一般設定値を更新
+    def update_settings_setting(self, key, value):
+        if not self.settings_config:
+            self.logger.error("一般設定が初期化されていません")
+            return
+
+        if key == 'encoding' and isinstance(value, str):
+            try:
+                value = codecs.lookup(value).name
+            except LookupError:
+                self.logger.error(f"サポートされていないエンコーディング: {value}")
+                return
+
+        with self._lock:
+            current_value = self.settings_config.get(key)
+
+        if current_value == value:
+            self.logger.info(f"{key} は既に {value} に設定されています")
+            return
+
+        with self._lock:
+            self.settings_config[key] = value
+            if self._config_parser and 'settings' in self._config_parser and self.config_path:
+                self._config_parser['settings'][key] = str(value)
+                try:
+                    self._persist_config()
+                except OSError as exc:
+                    self.logger.error(
+                        f"設定ファイル {self.config_path} への書き込みに失敗しました: {exc}"
+                    )
+
+        self.logger.info(f"{key} を {value} に更新しました")
         self.update_tray_menu()
 
 
@@ -1470,4 +1579,5 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 

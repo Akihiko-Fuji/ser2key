@@ -77,20 +77,26 @@ python -m nuitka ^
     --clean-cache=all ^
     --enable-plugin=anti-bloat ^
     --disable-plugin=pylint-warnings ^
-    --include-data-file=f.png=f.png ^
+    --include-data-file=f.ico=f.ico ^
     --windows-icon-from-ico=f.ico ^
     --windows-company-name="Akihiko Fujita" ^
     --windows-product-name="Serial to Keyboard" ^
-    --windows-file-version="1.5.0.0" ^
-    --windows-product-version="1.5.0.0" ^
+    --windows-file-version="1.6.0.0" ^
+    --windows-product-version="1.6.0.0" ^
     --windows-file-description="Serial to Keyboard Converter" ^
     --windows-console-mode=disable ^
+    --windows-force-stdout-spec=None ^
+    --windows-force-stderr-spec=None ^
     --python-flag=no_site ^
     --python-flag=no_warnings ^
     --python-flag=no_docstrings ^
     --nofollow-import-to=PIL ^
     --include-module=pystray._win32 ^
     --include-module=pystray._base ^
+    --include-module=pystray._util ^
+    --include-module=win32api ^
+    --include-module=win32con ^
+    --include-module=win32gui ^
     ser2key.py
 ```
 

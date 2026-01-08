@@ -48,6 +48,11 @@ if os.name != 'nt':
 DEFAULT_ICON_SIZE = (32, 32)
 ICON_FILES = ['f.ico']
 APP_NAME = 'ser2key'
+BAUDRATE_OPTIONS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
+BYTESIZE_OPTIONS = [5, 6, 7, 8]
+PARITY_OPTIONS = ['N', 'E', 'O', 'M', 'S']
+STOPBITS_OPTIONS = [1, 1.5, 2]
+TIMEOUT_OPTIONS = [0.1, 0.5, 1, 2, 5]
 
 
 # Nuitka のワンファイル実行時に設定されるパス情報を取得
@@ -660,6 +665,52 @@ class SerialKeyboardEmulator:
         def refresh_ports_action(icon, menu_item):
             self.refresh_available_ports()
 
+        def ensure_option_in_list(options, current):
+            if current is None or current in options:
+                return options
+            return [current] + list(options)
+
+        def format_value(value, unit=None):
+            if isinstance(value, float) and value.is_integer():
+                formatted = str(int(value))
+            else:
+                formatted = str(value)
+            if unit:
+                return f"{formatted} {unit}"
+            return formatted
+
+        def build_serial_option_menu(label, key, options, unit=None):
+            def get_current():
+                with self._lock:
+                    return self.serial_config.get(key) if self.serial_config else None
+
+            current = get_current()
+            option_values = ensure_option_in_list(options, current)
+            menu_items = []
+            for option in option_values:
+                def make_action(value):
+                    def select_action(icon, menu_item):
+                        self.update_serial_setting(key, value)
+
+                    return select_action
+
+                def make_checked(value):
+                    def is_checked(menu_item):
+                        return get_current() == value
+
+                    return is_checked
+
+                menu_items.append(
+                    item(
+                        format_value(option, unit=unit),
+                        make_action(option),
+                        checked=make_checked(option)
+                    )
+                )
+            if not menu_items:
+                menu_items.append(item('選択肢なし', None, enabled=False))
+            return item(label, pystray.Menu(*menu_items))
+
         menu_definition = [
             item('ポート一覧を更新', refresh_ports_action),
             pystray.Menu.SEPARATOR
@@ -690,6 +741,17 @@ class SerialKeyboardEmulator:
             menu_definition.append(item('ポートが見つかりません', None, enabled=False))
 
         menu_definition.extend([
+            pystray.Menu.SEPARATOR,
+            item(
+                'シリアル設定',
+                pystray.Menu(
+                    build_serial_option_menu('ボーレート', 'baudrate', BAUDRATE_OPTIONS),
+                    build_serial_option_menu('データ長', 'bytesize', BYTESIZE_OPTIONS),
+                    build_serial_option_menu('パリティ', 'parity', PARITY_OPTIONS),
+                    build_serial_option_menu('ストップビット', 'stopbits', STOPBITS_OPTIONS),
+                    build_serial_option_menu('タイムアウト', 'timeout', TIMEOUT_OPTIONS, unit='秒'),
+                )
+            ),
             pystray.Menu.SEPARATOR,
             item('終了', self.stop_application)
         ])
@@ -725,6 +787,38 @@ class SerialKeyboardEmulator:
                     )
 
         self.logger.info(f"シリアルポートを {port} に更新しました。再接続を実行します")
+        self._reconnect_event.set()
+        self.update_tray_menu()
+
+
+    # シリアル設定値を更新し再接続を要求
+    def update_serial_setting(self, key, value):
+        if not self.serial_config:
+            self.logger.error("シリアル設定が初期化されていません")
+            return
+
+        with self._lock:
+            current_value = self.serial_config.get(key)
+
+        if current_value == value:
+            self.logger.info(f"{key} は既に {value} に設定されています")
+            return
+
+        if key == 'parity' and isinstance(value, str):
+            value = value.upper()
+
+        with self._lock:
+            self.serial_config[key] = value
+            if self._config_parser and 'serial' in self._config_parser and self.config_path:
+                self._config_parser['serial'][key] = str(value)
+                try:
+                    self._persist_config()
+                except OSError as exc:
+                    self.logger.error(
+                        f"設定ファイル {self.config_path} への書き込みに失敗しました: {exc}"
+                    )
+
+        self.logger.info(f"{key} を {value} に更新しました。再接続を実行します")
         self._reconnect_event.set()
         self.update_tray_menu()
 
@@ -779,7 +873,7 @@ class SerialKeyboardEmulator:
                 'baudrate': int(config['serial']['baudrate']),
                 'bytesize': int(config['serial']['bytesize']),
                 'parity': config['serial']['parity'],
-                'stopbits': int(config['serial']['stopbits']),
+                'stopbits': float(config['serial']['stopbits']),
                 'timeout': float(config['serial']['timeout'])
             }
             self.settings_config = {

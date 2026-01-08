@@ -38,6 +38,7 @@ import codecs
 import re
 from datetime import datetime
 import subprocess
+import struct
 
 if os.name != 'nt':
     raise OSError('ser2key は Windows 専用のアプリケーションです。')
@@ -1071,6 +1072,55 @@ class SimpleIconImage:
                     rgb.extend((r, g, b))
                 return bytes(rgb)
         return self._to_rgba()
+
+    def save(self, fp, format=None):
+        if format and format.upper() != 'ICO':
+            raise ValueError('サポートされていないフォーマットです')
+
+        width, height = self.size
+        bgra = self._to_bgra()
+
+        row_bytes = width * 4
+        pixel_data = bytearray()
+        for y in range(height - 1, -1, -1):
+            start = y * row_bytes
+            pixel_data.extend(bgra[start:start + row_bytes])
+
+        mask_row_bytes = ((width + 31) // 32) * 4
+        mask_data = bytearray(mask_row_bytes * height)
+
+        info_header = struct.pack(
+            '<IIIHHIIIIII',
+            40,
+            width,
+            height * 2,
+            1,
+            32,
+            0,
+            len(pixel_data) + len(mask_data),
+            0,
+            0,
+            0,
+            0,
+        )
+
+        image_data = info_header + pixel_data + mask_data
+
+        ico_header = struct.pack('<HHH', 0, 1, 1)
+        dir_entry = struct.pack(
+            '<BBBBHHII',
+            width if width < 256 else 0,
+            height if height < 256 else 0,
+            0,
+            0,
+            1,
+            32,
+            len(image_data),
+            6 + 16,
+        )
+        fp.write(ico_header)
+        fp.write(dir_entry)
+        fp.write(image_data)
 
 class TrayIconManager:
     """タスクトレイアイコンを管理するクラス"""

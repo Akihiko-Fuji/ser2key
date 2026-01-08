@@ -45,7 +45,7 @@ if os.name != 'nt':
 
 # 定数定義
 DEFAULT_ICON_SIZE = (32, 32)
-ICON_FILES = ['f.ico', 'f.png']
+ICON_FILES = ['f.ico']
 APP_NAME = 'ser2key'
 
 
@@ -131,9 +131,14 @@ VK_CONTROL = 0x11
 VK_V = 0x56
 VK_RETURN = 0x0D
 KEYEVENTF_KEYUP = 0x0002
+IMAGE_ICON = 1
+LR_LOADFROMFILE = 0x00000010
+DIB_RGB_COLORS = 0
+DI_NORMAL = 0x0003
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
+gdi32 = ctypes.windll.gdi32
 ole32 = ctypes.OleDLL('ole32')
 
 ole32.OleInitialize.restype = ctypes.c_long
@@ -1047,6 +1052,27 @@ class SimpleIconImage:
 class TrayIconManager:
     """タスクトレイアイコンを管理するクラス"""
 
+    class _BitmapInfoHeader(ctypes.Structure):
+        _fields_ = [
+            ('biSize', wintypes.DWORD),
+            ('biWidth', wintypes.LONG),
+            ('biHeight', wintypes.LONG),
+            ('biPlanes', wintypes.WORD),
+            ('biBitCount', wintypes.WORD),
+            ('biCompression', wintypes.DWORD),
+            ('biSizeImage', wintypes.DWORD),
+            ('biXPelsPerMeter', wintypes.LONG),
+            ('biYPelsPerMeter', wintypes.LONG),
+            ('biClrUsed', wintypes.DWORD),
+            ('biClrImportant', wintypes.DWORD),
+        ]
+
+    class _BitmapInfo(ctypes.Structure):
+        _fields_ = [
+            ('bmiHeader', _BitmapInfoHeader),
+            ('bmiColors', wintypes.DWORD * 3),
+        ]
+
     @staticmethod
     # デフォルトアイコンを作成
     def create_default_icon():
@@ -1073,6 +1099,65 @@ class TrayIconManager:
         except Exception as exc:
             logging.getLogger('ser2key').warning(f"Pillow によるアイコン読み込みに失敗: {exc}")
             return None
+
+    @staticmethod
+    def _load_with_win32_icon(image_path, target_size):
+        if not image_path.lower().endswith('.ico'):
+            return None
+
+        width, height = target_size
+        hicon = user32.LoadImageW(
+            None,
+            image_path,
+            IMAGE_ICON,
+            width,
+            height,
+            LR_LOADFROMFILE,
+        )
+        if not hicon:
+            return None
+
+        hdc = gdi32.CreateCompatibleDC(None)
+        if not hdc:
+            user32.DestroyIcon(hicon)
+            return None
+
+        bmi = TrayIconManager._BitmapInfo()
+        bmi.bmiHeader.biSize = ctypes.sizeof(TrayIconManager._BitmapInfoHeader)
+        bmi.bmiHeader.biWidth = width
+        bmi.bmiHeader.biHeight = -height
+        bmi.bmiHeader.biPlanes = 1
+        bmi.bmiHeader.biBitCount = 32
+        bmi.bmiHeader.biCompression = 0
+        bmi.bmiHeader.biSizeImage = width * height * 4
+
+        bits = ctypes.c_void_p()
+        hbitmap = gdi32.CreateDIBSection(
+            hdc,
+            ctypes.byref(bmi),
+            DIB_RGB_COLORS,
+            ctypes.byref(bits),
+            None,
+            0,
+        )
+        if not hbitmap:
+            gdi32.DeleteDC(hdc)
+            user32.DestroyIcon(hicon)
+            return None
+
+        old_obj = gdi32.SelectObject(hdc, hbitmap)
+        try:
+            user32.DrawIconEx(hdc, 0, 0, hicon, width, height, 0, None, DI_NORMAL)
+            if not bits:
+                return None
+            data = ctypes.string_at(bits, width * height * 4)
+            return SimpleIconImage(width, height, data, mode='BGRA')
+        finally:
+            if old_obj:
+                gdi32.SelectObject(hdc, old_obj)
+            gdi32.DeleteObject(hbitmap)
+            gdi32.DeleteDC(hdc)
+            user32.DestroyIcon(hicon)
 
     @staticmethod
     # アイコン画像を作成または読み込む
@@ -1103,6 +1188,12 @@ class TrayIconManager:
 
         for image_path in candidate_paths:
             if os.path.exists(image_path):
+                win32_image = TrayIconManager._load_with_win32_icon(
+                    image_path,
+                    DEFAULT_ICON_SIZE,
+                )
+                if win32_image is not None:
+                    return win32_image
                 pillow_image = TrayIconManager._load_with_pillow(image_path)
                 if pillow_image is not None:
                     return pillow_image

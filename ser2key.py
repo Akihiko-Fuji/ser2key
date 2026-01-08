@@ -154,6 +154,30 @@ S_OK = 0
 S_FALSE = 1
 
 
+class _BitmapInfoHeader(ctypes.Structure):
+    _fields_ = [
+        ('biSize', wintypes.DWORD),
+        ('biWidth', wintypes.LONG),
+        ('biHeight', wintypes.LONG),
+        ('biPlanes', wintypes.WORD),
+        ('biBitCount', wintypes.WORD),
+        ('biCompression', wintypes.DWORD),
+        ('biSizeImage', wintypes.DWORD),
+        ('biXPelsPerMeter', wintypes.LONG),
+        ('biYPelsPerMeter', wintypes.LONG),
+        ('biClrUsed', wintypes.DWORD),
+        ('biClrImportant', wintypes.DWORD),
+    ]
+
+
+class _BitmapInfo(ctypes.Structure):
+    _fields_ = [
+        ('bmiHeader', _BitmapInfoHeader),
+        ('bmiColors', wintypes.DWORD * 3),
+    ]
+
+
+
 class _IUnknownVTable(ctypes.Structure):
     _fields_ = [
         ('QueryInterface', ctypes.c_void_p),
@@ -1048,30 +1072,11 @@ class SimpleIconImage:
                 return bytes(rgb)
         return self._to_rgba()
 
-
 class TrayIconManager:
     """タスクトレイアイコンを管理するクラス"""
 
-    class _BitmapInfoHeader(ctypes.Structure):
-        _fields_ = [
-            ('biSize', wintypes.DWORD),
-            ('biWidth', wintypes.LONG),
-            ('biHeight', wintypes.LONG),
-            ('biPlanes', wintypes.WORD),
-            ('biBitCount', wintypes.WORD),
-            ('biCompression', wintypes.DWORD),
-            ('biSizeImage', wintypes.DWORD),
-            ('biXPelsPerMeter', wintypes.LONG),
-            ('biYPelsPerMeter', wintypes.LONG),
-            ('biClrUsed', wintypes.DWORD),
-            ('biClrImportant', wintypes.DWORD),
-        ]
-
-    class _BitmapInfo(ctypes.Structure):
-        _fields_ = [
-            ('bmiHeader', _BitmapInfoHeader),
-            ('bmiColors', wintypes.DWORD * 3),
-        ]
+    _BitmapInfoHeader = _BitmapInfoHeader
+    _BitmapInfo = _BitmapInfo
 
     @staticmethod
     # デフォルトアイコンを作成

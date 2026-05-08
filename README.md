@@ -1,20 +1,20 @@
 # ser2key 
 
-## 🚀 概要  
-**ser2key** は、シリアル接続した機器類やバーコードリーダー、ハンディターミナルからの入力をキーボードイベントに変換する軽量な Python ユーティリティです。受信したシリアルデータを検出し、それをキーストロークとしてシミュレートします。高い効率性を重視して設計されており、**システムトレイ**上でバックグラウンド動作します。日本語を含むQRコードに対して有効に機能します。
+## 概要  
+**ser2key** は、シリアル接続した機器類やバーコードリーダー、ハンディターミナルからの入力をキーボードイベントに変換する軽量な Python ユーティリティです。受信したシリアルデータを検出し、それをキーストロークとしてシミュレートします。高い効率性を重視して設計されており、**システムトレイ**上でバックグラウンド動作します。日本語を含むQRコードに対して有効に機能します。Windows向けにコンパイル済みの実行ファイルだけでなくソースコードを用意しています。
 
-## ✨ 主な機能
+## 主な機能
 - 🔧 **シリアル通信の柔軟な設定** – `config.ini` でボーレート、パリティ、タイムアウトなどを調整可能  
 - ⌨️ **クリップボード経由のキーボード入力** – 受信データをペースト動作として入力  
 - 🚀 **高速なデータ入力に対応** – 特に **日本語・中国語・韓国語** に強く、既存ツールより高速  
 - 🖥️ **システムトレイ連携** – 接続する機器は、ワンクリックで状態確認・設定変更可能
 
-## 🌐 非日本語環境について
+## 非日本語環境について
 本体は日本語環境向けのシンプルさを優先しています。非日本語環境での独自要件（表記や言語追加など）は、各自でブランチして拡張してご利用ください。
 
 ---
 
-## ⚙️ 設定のヒント
+## 設定のヒント
 
 ### シリアルポート設定
 `config.ini` の `[serial]` および `[settings]` セクションを編集することで、  
@@ -58,55 +58,22 @@ footer=\r\n--\n
 ### パケットをまとめて処理する（バッファリング）
 `[settings]` セクションの `buffer_msec` を設定すると、受信開始から指定したミリ秒のあいだに到着したデータをまとめて 1 度の入力として送信できます。
 パケットが細切れで送信される機器に対してヘッダー・フッターの付与を 1 回に抑えたい場合などに便利です。
-既定値は `0` で、この場合はバッファリングを行わず、従来どおり受信した行を即座に入力します。
+既定値は `0` で、この場合はバッファリングを行わず、従来通り受信した行を即座に入力します。
 
 ### パフォーマンスの強み
 
 バーコードリーダーや QR コードリーダーの利用を想定して設計されており、多言語テキストの処理速度に優れています。
-⚡ 特に 日本語・中国語・韓国語 の QR コード入力時には、[Keyence AutoID Keyboard Wedge](https://www.keyence.co.jp/support/codereader/blsrus/soft/#d12) より数倍高速です。
+特に 日本語・中国語・韓国語 の QR コード入力時には、某有名企業の製品より数倍高速です。
 
 ### 💻 対応環境
 
-✅ Windows（テスト済み）– システムトレイ対応
-🔌 あらゆるシリアルデバイスに対応 – Windows 上で COM ポートとして認識される RS-232C、USB シリアルアダプタ、Bluetooth SPP など。
-
-### 💻 参考:コンパイルオプション
-```bat
-python -m nuitka ^
-    --mingw64 ^
-    --onefile ^
-    --remove-output ^
-    --assume-yes-for-downloads ^
-    --clean-cache=all ^
-    --enable-plugin=anti-bloat ^
-    --disable-plugin=pylint-warnings ^
-    --include-data-file=f.ico=f.ico ^
-    --windows-icon-from-ico=f.ico ^
-    --windows-company-name="Akihiko Fujita" ^
-    --windows-product-name="Serial to Keyboard" ^
-    --windows-file-version="1.6.0.0" ^
-    --windows-product-version="1.6.0.0" ^
-    --windows-file-description="Serial to Keyboard Converter" ^
-    --windows-console-mode=disable ^
-    --windows-force-stdout-spec=None ^
-    --windows-force-stderr-spec=None ^
-    --python-flag=no_site ^
-    --python-flag=no_warnings ^
-    --python-flag=no_docstrings ^
-    --nofollow-import-to=PIL ^
-    --include-module=pystray._win32 ^
-    --include-module=pystray._base ^
-    --include-module=pystray._util ^
-    --include-module=win32api ^
-    --include-module=win32con ^
-    --include-module=win32gui ^
-    ser2key.py
-```
+Windows（テスト済み）– システムトレイ対応
+あらゆるシリアルデバイスに対応 – Windows 上で COM ポートとして認識される RS-232C、USB シリアルアダプタ、Bluetooth SPP など。
 
 
-### 🆙 更新履歴
+### 更新履歴
 1.6
-タスクトレイアイコンが出てこない環境があったので、なおした（つもり）。
+タスクトレイアイコンが出てこない環境があったので、修正しました。
 
 1.5
 不具合修正。クリップボード周りの処理の不具合を見直し、Windows以外の環境で動作させた場合、安全に停止するようにしました。

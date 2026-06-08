@@ -169,3 +169,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Local Windows/Nuitka release artifacts
+*.exe
+ser2key*.zip
+*.build/
+*.dist/
+*.onefile-build/

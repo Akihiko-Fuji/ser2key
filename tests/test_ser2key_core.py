@@ -1,3 +1,4 @@
+import math
 import unittest
 from datetime import datetime
 
@@ -20,6 +21,9 @@ class OutputTemplateTests(unittest.TestCase):
     def test_preserves_unknown_escape_sequences(self):
         self.assertEqual(decode_output_template(r'C:\queue\item'), r'C:\queue\item')
 
+    def test_preserves_incomplete_escape_sequences(self):
+        self.assertEqual(decode_output_template(r'末尾\u12'), r'末尾\u12')
+
     def test_config_parser_preserves_strftime_percent_signs(self):
         parser = create_config_parser()
         parser.read_string('[output]\nheader={DATE:%Y%m%d}\n')
@@ -33,6 +37,11 @@ class OutputTemplateTests(unittest.TestCase):
             ),
             '2026-06-08 14:05:09 20260608-140509',
         )
+
+    def test_leaves_unknown_tokens_unchanged(self):
+        now = datetime(2026, 6, 8, 14, 5, 9)
+        self.assertEqual(render_output_template('{USER} {DATE}', now), '{USER} 2026-06-08')
+
 
 
 class ConfigurationValidationTests(unittest.TestCase):
@@ -67,6 +76,19 @@ class ConfigurationValidationTests(unittest.TestCase):
         }
         for key, value in invalid_values.items():
             with self.subTest(key=key):
+                config = dict(self.serial_config)
+                config[key] = value
+                with self.assertRaises(ValueError):
+                    validate_serial_config(config)
+
+    def test_rejects_boolean_and_non_finite_serial_values(self):
+        for key, value in (
+            ('bytesize', 8.0),
+            ('stopbits', True),
+            ('timeout', math.inf),
+            ('timeout', math.nan),
+        ):
+            with self.subTest(key=key, value=value):
                 config = dict(self.serial_config)
                 config[key] = value
                 with self.assertRaises(ValueError):

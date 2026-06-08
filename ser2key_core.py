@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import codecs
 import configparser
+import math
 from datetime import datetime
 import re
 from typing import Callable, Mapping, MutableMapping, Optional
@@ -76,7 +77,11 @@ def validate_serial_config(config: Mapping[str, object]) -> None:
         raise ValueError(f"不正なボーレート: {baudrate}")
 
     bytesize = config.get('bytesize')
-    if bytesize not in BYTESIZE_OPTIONS:
+    if (
+        not isinstance(bytesize, int)
+        or isinstance(bytesize, bool)
+        or bytesize not in BYTESIZE_OPTIONS
+    ):
         raise ValueError(f"不正なデータ長: {bytesize}")
 
     parity = config.get('parity')
@@ -84,13 +89,18 @@ def validate_serial_config(config: Mapping[str, object]) -> None:
         raise ValueError(f"不正なパリティ: {parity}")
 
     stopbits = config.get('stopbits')
-    if stopbits not in STOPBITS_OPTIONS:
+    if (
+        not isinstance(stopbits, (int, float))
+        or isinstance(stopbits, bool)
+        or stopbits not in STOPBITS_OPTIONS
+    ):
         raise ValueError(f"不正なストップビット: {stopbits}")
 
     timeout = config.get('timeout')
     if (
         not isinstance(timeout, (int, float))
         or isinstance(timeout, bool)
+        or not math.isfinite(timeout)
         or timeout < 0
     ):
         raise ValueError(f"不正なタイムアウト: {timeout}")

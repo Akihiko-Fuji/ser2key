@@ -3,9 +3,9 @@
 """
 Serial to keyboard:
 Author: Akihiko Fujita
-Version: 1.7.0
+Version: 1.7.1
 
-Copyright 2025 Akihiko Fujita
+Copyright 2025-2026 Akihiko Fujita
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,8 +20,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import codecs
-import configparser
 import ctypes
 from ctypes import wintypes
 from contextlib import contextmanager
@@ -29,7 +27,6 @@ from datetime import datetime
 import logging
 from logging.handlers import RotatingFileHandler
 import os
-import re
 import struct
 import tempfile
 import sys
@@ -41,6 +38,20 @@ from pystray import MenuItem as item
 import serial
 from serial.tools import list_ports
 
+from ser2key_core import (
+    BAUDRATE_OPTIONS,
+    BYTESIZE_OPTIONS,
+    ENCODING_OPTIONS,
+    PARITY_OPTIONS,
+    STOPBITS_OPTIONS,
+    TIMEOUT_OPTIONS,
+    create_config_parser,
+    decode_output_template,
+    render_output_template,
+    validate_serial_config as validate_serial_values,
+    validate_settings_config as validate_settings_values,
+)
+
 if os.name != 'nt':
     raise OSError('ser2key は Windows 専用のアプリケーションです。')
 
@@ -49,12 +60,6 @@ if os.name != 'nt':
 DEFAULT_ICON_SIZE = (32, 32)
 ICON_FILES = ['f.ico']
 APP_NAME = 'ser2key'
-BAUDRATE_OPTIONS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
-BYTESIZE_OPTIONS = [5, 6, 7, 8]
-PARITY_OPTIONS = ['N', 'E', 'O', 'M', 'S']
-STOPBITS_OPTIONS = [1, 1.5, 2]
-TIMEOUT_OPTIONS = [0.1, 0.5, 1, 2, 5]
-ENCODING_OPTIONS = ['shift_jis', 'ascii', 'utf-8']
 ENCODING_LABELS = {
     'shift_jis': 'Shift-JIS',
     'ascii': 'ASCII',
@@ -120,14 +125,6 @@ def ensure_storage_directory(storage_dir=None):
         raise RuntimeError(
             f'設定保存用ディレクトリ {target_dir} を作成できません: {exc}'
         ) from exc
-
-
-DATETIME_TOKEN_PATTERN = re.compile(r'\{(DATE|TIME|DATETIME)(?::([^}]*))?\}')
-DEFAULT_DATETIME_FORMATS = {
-    'DATE': '%Y-%m-%d',
-    'TIME': '%H:%M:%S',
-    'DATETIME': '%Y-%m-%d %H:%M:%S',
-}
 
 
 RECONNECT_DELAY = 5     # 再接続までの待機時間（秒）
@@ -487,8 +484,8 @@ class SerialKeyboardEmulator:
         if not text:
             return ''
         try:
-            return codecs.decode(text.encode('utf-8'), 'unicode_escape')
-        except Exception as exc:
+            return decode_output_template(text)
+        except (UnicodeDecodeError, ValueError) as exc:
             self.logger.warning(
                 f"[output] セクションの {field_name} のエスケープシーケンス解釈に失敗しました: {exc}"
             )
@@ -498,18 +495,12 @@ class SerialKeyboardEmulator:
         if not template:
             return ''
 
-        def replace(match):
-            token = match.group(1)
-            fmt = match.group(2) or DEFAULT_DATETIME_FORMATS[token]
-            try:
-                return now.strftime(fmt)
-            except ValueError as exc:
-                self.logger.warning(
-                    f"[output] {token} の書式 '{fmt}' が不正なため置換できませんでした: {exc}"
-                )
-                return match.group(0)
+        def log_format_error(token, fmt, exc):
+            self.logger.warning(
+                f"[output] {token} の書式 '{fmt}' が不正なため置換できませんでした: {exc}"
+            )
 
-        return DATETIME_TOKEN_PATTERN.sub(replace, template)
+        return render_output_template(template, now, on_error=log_format_error)
 
     def _apply_output_templates(self, payload):
         if payload is None:
@@ -601,7 +592,7 @@ class SerialKeyboardEmulator:
 
     def create_default_config(self):
         """デフォルト設定ファイルの作成"""
-        config = configparser.ConfigParser()
+        config = create_config_parser()
 
         config['serial'] = {
             'port': 'COM8',
@@ -652,9 +643,7 @@ class SerialKeyboardEmulator:
 
     def validate_serial_config(self, config):
         """シリアル通信の設定値を検証"""
-        baudrate = config['baudrate']
-        if baudrate <= 0:
-            raise ValueError(f"不正なボーレート: {baudrate}")
+        validate_serial_values(config)
 
         self.refresh_available_ports(update_menu=False)
         self.logger.info(f"利用可能なポート: {self.available_ports}")
@@ -857,11 +846,20 @@ class SerialKeyboardEmulator:
             self.logger.error("シリアル設定が初期化されていません")
             return
 
+        candidate = dict(self.serial_config)
+        candidate['port'] = port
+        try:
+            validate_serial_values(candidate)
+        except ValueError as exc:
+            self.logger.error(str(exc))
+            return
+
         if port not in self.available_ports:
             self.logger.warning(f"ポート {port} は現在の一覧に存在しませんが接続を試行します")
 
         with self._lock:
-            if self.serial_config.get('port') == port:
+            previous = self.serial_config.get('port')
+            if previous == port:
                 self.logger.info(f"ポート {port} は既に選択されています")
                 return
             self.serial_config['port'] = port
@@ -870,9 +868,12 @@ class SerialKeyboardEmulator:
                 try:
                     self._persist_config()
                 except OSError as exc:
+                    self.serial_config['port'] = previous
+                    self._config_parser['serial']['port'] = str(previous)
                     self.logger.error(
                         f"設定ファイル {self.config_path} への書き込みに失敗しました: {exc}"
                     )
+                    return
 
         self.logger.info(f"シリアルポートを {port} に更新しました。再接続を実行します")
         self._reconnect_event.set()
@@ -888,8 +889,17 @@ class SerialKeyboardEmulator:
         if key == 'parity' and isinstance(value, str):
             value = value.upper()
 
+        candidate = dict(self.serial_config)
+        candidate[key] = value
+        try:
+            validate_serial_values(candidate)
+        except ValueError as exc:
+            self.logger.error(str(exc))
+            return
+
         with self._lock:
-            if self.serial_config.get(key) == value:
+            previous = self.serial_config.get(key)
+            if previous == value:
                 self.logger.info(f"{key} は既に {value} に設定されています")
                 return
             self.serial_config[key] = value
@@ -898,9 +908,12 @@ class SerialKeyboardEmulator:
                 try:
                     self._persist_config()
                 except OSError as exc:
+                    self.serial_config[key] = previous
+                    self._config_parser['serial'][key] = str(previous)
                     self.logger.error(
                         f"設定ファイル {self.config_path} への書き込みに失敗しました: {exc}"
                     )
+                    return
 
         self.logger.info(f"{key} を {value} に更新しました。再接続を実行します")
         self._reconnect_event.set()
@@ -913,15 +926,18 @@ class SerialKeyboardEmulator:
             self.logger.error("一般設定が初期化されていません")
             return
 
-        if key == 'encoding' and isinstance(value, str):
-            try:
-                value = codecs.lookup(value).name
-            except LookupError:
-                self.logger.error(f"サポートされていないエンコーディング: {value}")
-                return
+        candidate = dict(self.settings_config)
+        candidate[key] = value
+        try:
+            validate_settings_values(candidate)
+        except ValueError as exc:
+            self.logger.error(str(exc))
+            return
+        value = candidate[key]
 
         with self._lock:
-            if self.settings_config.get(key) == value:
+            previous = self.settings_config.get(key)
+            if previous == value:
                 self.logger.info(f"{key} は既に {value} に設定されています")
                 return
             self.settings_config[key] = value
@@ -930,9 +946,12 @@ class SerialKeyboardEmulator:
                 try:
                     self._persist_config()
                 except OSError as exc:
+                    self.settings_config[key] = previous
+                    self._config_parser['settings'][key] = str(previous)
                     self.logger.error(
                         f"設定ファイル {self.config_path} への書き込みに失敗しました: {exc}"
                     )
+                    return
 
         self.logger.info(f"{key} を {value} に更新しました")
         self.update_tray_menu()
@@ -946,13 +965,7 @@ class SerialKeyboardEmulator:
 
     def validate_settings_config(self, config):
         """一般設定の検証"""
-        encoding_name = config['encoding']
-        try:
-            normalized = codecs.lookup(encoding_name).name
-        except (LookupError, TypeError):
-            raise ValueError(f"サポートされていないエンコーディング: {encoding_name}")
-
-        config['encoding'] = normalized
+        validate_settings_values(config)
 
 
     def read_config(self):
@@ -967,7 +980,7 @@ class SerialKeyboardEmulator:
         else:
             self.config_path = config_path
 
-        config = configparser.ConfigParser()
+        config = create_config_parser()
         try:
             read_files = config.read(config_path, encoding='utf-8')
         except OSError as exc:

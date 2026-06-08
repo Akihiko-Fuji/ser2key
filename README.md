@@ -96,13 +96,20 @@ py ser2key.py
 プラットフォーム非依存ロジックのテストは、Windows 以外でも実行できます。
 
 ```bash
+python -m pip install -e ".[dev]"
+ruff check ser2key.py ser2key_core.py tests
 python -m unittest discover -s tests -v
 python -m compileall -q ser2key.py ser2key_core.py tests
+python -m build
+python -m twine check dist/*
 ```
 
 Windows 上では、実機または仮想 COM ポートを使用して、接続・再接続、トレイメニュー、Unicode 貼り付け、クリップボード復元、終了処理も確認してください。
 
 ### 更新履歴
+1.7.1
+設定テンプレートとシリアル設定検証の回帰を修正し、設定保存失敗時のロールバック、入力値検証、配布物検証、タグベースの Windows 実行ファイル自動ビルドを追加しました。
+
 1.7.0
 日本語テンプレートの文字化けを修正し、設定検証、貼り付け時のクリップボード競合対策、自動テスト、Python パッケージ情報を追加しました。
 
@@ -130,5 +137,6 @@ Windows に特化し、使用するライブラリを見直すことで実行フ
 
 ### 📥 ダウンロード
 
-Windows x64 実行ファイルと設定ファイルを含みます。
-📌 [ser2key.zip](https://github.com/Akihiko-Fuji/ser2key/raw/refs/heads/main/ser2key.zip)  
+Windows x64 実行ファイルと設定ファイルを含む最新版は、[GitHub Releases](https://github.com/Akihiko-Fuji/ser2key/releases/latest) から `ser2key-windows-x64.zip` をダウンロードしてください。
+
+バージョンタグ（例: `v1.7.1`）を push すると、GitHub Actions がテスト済みの Windows 実行ファイルをビルドし、Release に添付します。手動実行時は Actions の成果物として同じ ZIP を取得できます。

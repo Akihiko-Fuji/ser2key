@@ -859,6 +859,7 @@ class SerialKeyboardEmulator:
         if port not in self.available_ports:
             self.logger.warning(f"ポート {port} は現在の一覧に存在しませんが接続を試行します")
 
+        persistence_failed = False
         with self._lock:
             previous = self.serial_config.get('port')
             if previous == port:
@@ -875,9 +876,12 @@ class SerialKeyboardEmulator:
                     self.logger.error(
                         f"設定ファイル {self.config_path} への書き込みに失敗しました: {exc}"
                     )
-                    # 永続化前の値へ戻した状態をトレイ表示にも反映する。
-                    self.update_tray_menu()
-                    return
+                    persistence_failed = True
+
+        if persistence_failed:
+            # メニュー構築時にも同じロックを取得するため、ロック解放後に表示を戻す。
+            self.update_tray_menu()
+            return
 
         self.logger.info(f"シリアルポートを {port} に更新しました。再接続を実行します")
         self._reconnect_event.set()
@@ -901,6 +905,7 @@ class SerialKeyboardEmulator:
             self.logger.error(str(exc))
             return
 
+        persistence_failed = False
         with self._lock:
             previous = self.serial_config.get(key)
             if previous == value:
@@ -917,9 +922,12 @@ class SerialKeyboardEmulator:
                     self.logger.error(
                         f"設定ファイル {self.config_path} への書き込みに失敗しました: {exc}"
                     )
-                    # 永続化前の値へ戻した状態をトレイ表示にも反映する。
-                    self.update_tray_menu()
-                    return
+                    persistence_failed = True
+
+        if persistence_failed:
+            # メニュー構築時にも同じロックを取得するため、ロック解放後に表示を戻す。
+            self.update_tray_menu()
+            return
 
         self.logger.info(f"{key} を {value} に更新しました。再接続を実行します")
         self._reconnect_event.set()
@@ -941,6 +949,7 @@ class SerialKeyboardEmulator:
             return
         value = candidate[key]
 
+        persistence_failed = False
         with self._lock:
             previous = self.settings_config.get(key)
             if previous == value:
@@ -957,9 +966,12 @@ class SerialKeyboardEmulator:
                     self.logger.error(
                         f"設定ファイル {self.config_path} への書き込みに失敗しました: {exc}"
                     )
-                    # 永続化前の値へ戻した状態をトレイ表示にも反映する。
-                    self.update_tray_menu()
-                    return
+                    persistence_failed = True
+
+        if persistence_failed:
+            # メニュー構築時にも同じロックを取得するため、ロック解放後に表示を戻す。
+            self.update_tray_menu()
+            return
 
         self.logger.info(f"{key} を {value} に更新しました")
         self.update_tray_menu()

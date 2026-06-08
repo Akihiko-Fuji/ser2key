@@ -19,7 +19,9 @@ class ConfigurationUpdateTests(unittest.TestCase):
         self.emulator.logger = Mock()
         self.emulator._lock = threading.Lock()
         self.emulator._reconnect_event = Mock()
-        self.emulator.update_tray_menu = Mock()
+        self.emulator.update_tray_menu = Mock(
+            side_effect=self.assert_menu_refresh_runs_without_config_lock
+        )
         self.emulator.available_ports = ['COM7', 'COM8']
         self.emulator.serial_config = {
             'port': 'COM7',
@@ -41,6 +43,12 @@ class ConfigurationUpdateTests(unittest.TestCase):
         })
         self.emulator.config_path = 'config.ini'
         self.emulator._persist_config = Mock(side_effect=OSError('write failed'))
+
+    def assert_menu_refresh_runs_without_config_lock(self):
+        self.assertFalse(
+            self.emulator._lock.locked(),
+            'トレイメニューの再構築は設定ロックの解放後に行う必要があります',
+        )
 
     def test_serial_port_rollback_refreshes_menu_without_reconnect(self):
         self.emulator.update_serial_port('COM8')

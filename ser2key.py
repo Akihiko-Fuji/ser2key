@@ -20,6 +20,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import codecs
+import configparser
 import ctypes
 from ctypes import wintypes
 from contextlib import contextmanager
@@ -27,6 +29,7 @@ from datetime import datetime
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+import re
 import struct
 import tempfile
 import sys
@@ -38,20 +41,6 @@ from pystray import MenuItem as item
 import serial
 from serial.tools import list_ports
 
-from ser2key_core import (
-    BAUDRATE_OPTIONS,
-    BYTESIZE_OPTIONS,
-    ENCODING_OPTIONS,
-    PARITY_OPTIONS,
-    STOPBITS_OPTIONS,
-    TIMEOUT_OPTIONS,
-    create_config_parser,
-    decode_output_template,
-    render_output_template,
-    validate_serial_config as validate_serial_values,
-    validate_settings_config as validate_settings_values,
-)
-
 if os.name != 'nt':
     raise OSError('ser2key は Windows 専用のアプリケーションです。')
 
@@ -60,6 +49,12 @@ if os.name != 'nt':
 DEFAULT_ICON_SIZE = (32, 32)
 ICON_FILES = ['f.ico']
 APP_NAME = 'ser2key'
+BAUDRATE_OPTIONS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
+BYTESIZE_OPTIONS = [5, 6, 7, 8]
+PARITY_OPTIONS = ['N', 'E', 'O', 'M', 'S']
+STOPBITS_OPTIONS = [1, 1.5, 2]
+TIMEOUT_OPTIONS = [0.1, 0.5, 1, 2, 5]
+ENCODING_OPTIONS = ['shift_jis', 'ascii', 'utf-8']
 ENCODING_LABELS = {
     'shift_jis': 'Shift-JIS',
     'ascii': 'ASCII',
@@ -67,8 +62,8 @@ ENCODING_LABELS = {
 }
 
 
-# Nuitka のワンファイル実行時に設定されるパス情報を取得
 def _get_nuitka_onefile_dirs():
+    """Nuitka のワンファイル実行時に設定されるパス情報を取得"""
     dirs = []
     # 解凍先ディレクトリ（同梱データはここに展開される）
     temp_dir = os.environ.get('NUITKA_ONEFILE_TEMP')
@@ -83,8 +78,8 @@ def _get_nuitka_onefile_dirs():
     return dirs
 
 
-# Nuitka Onefile の場合は、元の実行ファイルの配置場所を最優先で返す
 def _get_executable_directory():
+    """Nuitka Onefile の場合は、元の実行ファイルの配置場所を最優先で返す"""
     nuitka_dirs = _get_nuitka_onefile_dirs()
     if nuitka_dirs:
         return nuitka_dirs[-1]
@@ -126,6 +121,13 @@ def ensure_storage_directory(storage_dir=None):
             f'設定保存用ディレクトリ {target_dir} を作成できません: {exc}'
         ) from exc
 
+
+DATETIME_TOKEN_PATTERN = re.compile(r'\{(DATE|TIME|DATETIME)(?::([^}]*))?\}')
+DEFAULT_DATETIME_FORMATS = {
+    'DATE': '%Y-%m-%d',
+    'TIME': '%H:%M:%S',
+    'DATETIME': '%Y-%m-%d %H:%M:%S',
+}
 
 
 RECONNECT_DELAY = 5     # 再接続までの待機時間（秒）
@@ -194,7 +196,6 @@ class _BitmapInfo(ctypes.Structure):
     ]
 
 
-
 class _IUnknownVTable(ctypes.Structure):
     _fields_ = [
         ('QueryInterface', ctypes.c_void_p),
@@ -226,8 +227,8 @@ class ClipboardBackupData:
 _ole_thread_state = threading.local()
 
 
-# 現在のスレッドで OLE を初期化
 def ensure_ole_initialized():
+    """現在のスレッドで OLE を初期化"""
     if getattr(_ole_thread_state, 'initialized', False):
         return
 
@@ -238,8 +239,8 @@ def ensure_ole_initialized():
     _ole_thread_state.initialized = True
 
 
-# クリップボードが空であるか確認
 def is_clipboard_empty():
+    """クリップボードが空であるか確認"""
     try:
         with open_clipboard():
             kernel32.SetLastError(0)
@@ -251,8 +252,8 @@ def is_clipboard_empty():
     return False
 
 
-# クリップボードの全データを退避
 def backup_clipboard():
+    """クリップボードの全データを退避"""
     ensure_ole_initialized()
 
     empty = is_clipboard_empty()
@@ -279,8 +280,8 @@ def backup_clipboard():
         )
 
 
-# 退避したクリップボード内容を復元
 def restore_clipboard(backup):
+    """退避したクリップボード内容を復元"""
     if not backup:
         return
 
@@ -299,8 +300,8 @@ def restore_clipboard(backup):
 
 
 @contextmanager
-# クリップボードを安全に開くためのコンテキストマネージャ
 def open_clipboard():
+    """クリップボードを安全に開くためのコンテキストマネージャ"""
     deadline = time.time() + CLIPBOARD_TIMEOUT
     opened = False
     while time.time() < deadline:
@@ -318,8 +319,8 @@ def open_clipboard():
             user32.CloseClipboard()
 
 
-# 現在のクリップボード文字列を取得
 def get_clipboard_text():
+    """現在のクリップボード文字列を取得"""
     with open_clipboard():
         handle = user32.GetClipboardData(CF_UNICODETEXT)
         if not handle:
@@ -334,8 +335,8 @@ def get_clipboard_text():
         return data
 
 
-# クリップボードに文字列を設定
 def set_clipboard_text(text):
+    """クリップボードに文字列を設定"""
     if text is None:
         return clear_clipboard()
 
@@ -362,21 +363,21 @@ def set_clipboard_text(text):
             raise ClipboardError('クリップボードへの設定に失敗しました')
 
 
-# クリップボードを空にする
 def clear_clipboard():
+    """クリップボードを空にする"""
     with open_clipboard():
         user32.EmptyClipboard()
 
 
-# キーイベントを送信
 def _key_event(vk_code, key_up=False):
+    """キーイベントを送信"""
     scan_code = user32.MapVirtualKeyW(vk_code, 0)
     flags = KEYEVENTF_KEYUP if key_up else 0
     user32.keybd_event(vk_code, scan_code, flags, 0)
 
 
-# Ctrl+V と必要に応じて Enter キーを送信
 def send_ctrl_v(add_enter=False):
+    """Ctrl+V と必要に応じて Enter キーを送信"""
     _key_event(VK_CONTROL)
     _key_event(VK_V)
     _key_event(VK_V, key_up=True)
@@ -486,8 +487,8 @@ class SerialKeyboardEmulator:
         if not text:
             return ''
         try:
-            return decode_output_template(text)
-        except (UnicodeDecodeError, ValueError) as exc:
+            return codecs.decode(text.encode('utf-8'), 'unicode_escape')
+        except Exception as exc:
             self.logger.warning(
                 f"[output] セクションの {field_name} のエスケープシーケンス解釈に失敗しました: {exc}"
             )
@@ -497,12 +498,18 @@ class SerialKeyboardEmulator:
         if not template:
             return ''
 
-        def log_format_error(token, fmt, exc):
-            self.logger.warning(
-                f"[output] {token} の書式 '{fmt}' が不正なため置換できませんでした: {exc}"
-            )
+        def replace(match):
+            token = match.group(1)
+            fmt = match.group(2) or DEFAULT_DATETIME_FORMATS[token]
+            try:
+                return now.strftime(fmt)
+            except ValueError as exc:
+                self.logger.warning(
+                    f"[output] {token} の書式 '{fmt}' が不正なため置換できませんでした: {exc}"
+                )
+                return match.group(0)
 
-        return render_output_template(template, now, on_error=log_format_error)
+        return DATETIME_TOKEN_PATTERN.sub(replace, template)
 
     def _apply_output_templates(self, payload):
         if payload is None:
@@ -594,7 +601,7 @@ class SerialKeyboardEmulator:
 
     def create_default_config(self):
         """デフォルト設定ファイルの作成"""
-        config = create_config_parser()
+        config = configparser.ConfigParser()
 
         config['serial'] = {
             'port': 'COM8',
@@ -645,7 +652,9 @@ class SerialKeyboardEmulator:
 
     def validate_serial_config(self, config):
         """シリアル通信の設定値を検証"""
-        validate_serial_values(config)
+        baudrate = config['baudrate']
+        if baudrate <= 0:
+            raise ValueError(f"不正なボーレート: {baudrate}")
 
         self.refresh_available_ports(update_menu=False)
         self.logger.info(f"利用可能なポート: {self.available_ports}")
@@ -848,14 +857,13 @@ class SerialKeyboardEmulator:
             self.logger.error("シリアル設定が初期化されていません")
             return
 
-        current_port = self.serial_config.get('port')
-        if port == current_port:
-            self.logger.info(f"ポート {port} は既に選択されています")
-            return
         if port not in self.available_ports:
             self.logger.warning(f"ポート {port} は現在の一覧に存在しませんが接続を試行します")
 
         with self._lock:
+            if self.serial_config.get('port') == port:
+                self.logger.info(f"ポート {port} は既に選択されています")
+                return
             self.serial_config['port'] = port
             if self._config_parser and 'serial' in self._config_parser and self.config_path:
                 self._config_parser['serial']['port'] = port
@@ -906,14 +914,11 @@ class SerialKeyboardEmulator:
             return
 
         if key == 'encoding' and isinstance(value, str):
-            candidate = dict(self.settings_config)
-            candidate[key] = value
             try:
-                validate_settings_values(candidate)
-            except ValueError as exc:
-                self.logger.error(str(exc))
+                value = codecs.lookup(value).name
+            except LookupError:
+                self.logger.error(f"サポートされていないエンコーディング: {value}")
                 return
-            value = candidate[key]
 
         with self._lock:
             if self.settings_config.get(key) == value:
@@ -941,7 +946,13 @@ class SerialKeyboardEmulator:
 
     def validate_settings_config(self, config):
         """一般設定の検証"""
-        validate_settings_values(config)
+        encoding_name = config['encoding']
+        try:
+            normalized = codecs.lookup(encoding_name).name
+        except (LookupError, TypeError):
+            raise ValueError(f"サポートされていないエンコーディング: {encoding_name}")
+
+        config['encoding'] = normalized
 
 
     def read_config(self):
@@ -956,7 +967,7 @@ class SerialKeyboardEmulator:
         else:
             self.config_path = config_path
 
-        config = create_config_parser()
+        config = configparser.ConfigParser()
         try:
             read_files = config.read(config_path, encoding='utf-8')
         except OSError as exc:
@@ -982,7 +993,7 @@ class SerialKeyboardEmulator:
             }
             self.settings_config = {
                 'add_enter': config.getboolean('settings', 'add_enter', fallback=True),
-                'encoding': config.get('settings', 'encoding', fallback='sjis'),
+                'encoding': config.get('settings', 'encoding', fallback='shift_jis'),
                 'buffer_msec': config.getint('settings', 'buffer_msec', fallback=0)
             }
 
@@ -1018,8 +1029,8 @@ class SerialKeyboardEmulator:
         self.logger.info(f"受信: {payload}")
         if formatted_payload != payload:
             self.logger.info(f"整形後: {formatted_payload}")
-        self.last_activity = time.time()
         with self._lock:
+            self.last_activity = time.time()
             add_enter = self.settings_config.get('add_enter', False) if self.settings_config else False
 
         try:
@@ -1323,6 +1334,7 @@ class SimpleIconImage:
         fp.write(dir_entry)
         fp.write(image_data)
 
+
 class TrayIconManager:
     """タスクトレイアイコンを管理するクラス"""
 
@@ -1346,7 +1358,7 @@ class TrayIconManager:
     def _load_with_pillow(image_path):
         try:
             from PIL import Image
-        except Exception:
+        except ImportError:
             return None
 
         try:
@@ -1402,18 +1414,19 @@ class TrayIconManager:
             return None
 
         old_obj = gdi32.SelectObject(hdc, hbitmap)
+        result = None
         try:
             user32.DrawIconEx(hdc, 0, 0, hicon, width, height, 0, None, DI_NORMAL)
-            if not bits:
-                return None
-            data = ctypes.string_at(bits, width * height * 4)
-            return SimpleIconImage(width, height, data, mode='BGRA')
+            if bits:
+                data = ctypes.string_at(bits, width * height * 4)
+                result = SimpleIconImage(width, height, data, mode='BGRA')
         finally:
             if old_obj:
                 gdi32.SelectObject(hdc, old_obj)
             gdi32.DeleteObject(hbitmap)
             gdi32.DeleteDC(hdc)
             user32.DestroyIcon(hicon)
+        return result
 
     @staticmethod
     def create_icon_image():
@@ -1457,8 +1470,8 @@ class TrayIconManager:
         return TrayIconManager.create_default_icon()
 
 
-# pystray が SimpleIconImage を扱えるようにパッチ適用
 def ensure_pystray_image_support():
+    """pystray が SimpleIconImage を扱えるようにパッチ適用"""
     try:
         from pystray import _base
     except Exception:
@@ -1486,14 +1499,14 @@ def ensure_pystray_image_support():
         patch_icon_class(_win32.Icon)
 
 
-# エラーメッセージをポップアップで表示
 def show_error_message(message):
+    """エラーメッセージをポップアップで表示"""
     user32.MessageBoxW(None, str(message), "エラー", 0x00000010)
 
 
-# メイン処理
 def main():
-    logger = logging.getLogger('ser2key')
+    """メイン処理"""
+    logger = setup_logging()
 
     # --- 多重起動防止処理 ---
     mutex_name = "Global\\ser2key_mutex"
@@ -1561,7 +1574,4 @@ def main():
             _k32.CloseHandle(mutex)
 
 if __name__ == "__main__":
-
     main()
-
-

@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import codecs
+from collections.abc import Callable, Mapping, MutableMapping
 import configparser
 import math
 from datetime import datetime
 import re
-from typing import Callable, Mapping, MutableMapping, Optional
+from typing import Final, Optional
 
-BAUDRATE_OPTIONS = (1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200)
-BYTESIZE_OPTIONS = (5, 6, 7, 8)
-PARITY_OPTIONS = ('N', 'E', 'O', 'M', 'S')
-STOPBITS_OPTIONS = (1, 1.5, 2)
-TIMEOUT_OPTIONS = (0.1, 0.5, 1, 2, 5)
-ENCODING_OPTIONS = ('shift_jis', 'ascii', 'utf-8')
-MAX_BUFFER_MSEC = 60_000
+BAUDRATE_OPTIONS: Final[tuple[int, ...]] = (
+    1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200
+)
+BYTESIZE_OPTIONS: Final[tuple[int, ...]] = (5, 6, 7, 8)
+PARITY_OPTIONS: Final[tuple[str, ...]] = ('N', 'E', 'O', 'M', 'S')
+STOPBITS_OPTIONS: Final[tuple[float, ...]] = (1, 1.5, 2)
+TIMEOUT_OPTIONS: Final[tuple[float, ...]] = (0.1, 0.5, 1, 2, 5)
+ENCODING_OPTIONS: Final[tuple[str, ...]] = ('shift_jis', 'ascii', 'utf-8')
+MAX_BUFFER_MSEC: Final = 60_000
 
 DATETIME_TOKEN_PATTERN = re.compile(r'\{(DATE|TIME|DATETIME)(?::([^}]*))?\}')
 ESCAPE_SEQUENCE_PATTERN = re.compile(

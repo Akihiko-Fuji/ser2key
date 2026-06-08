@@ -60,7 +60,7 @@ if os.name != 'nt':
 DEFAULT_ICON_SIZE = (32, 32)
 ICON_FILES = ['f.ico']
 APP_NAME = 'ser2key'
-ENCODING_LABELS = {
+ENCODING_LABELS: dict[str, str] = {
     'shift_jis': 'Shift-JIS',
     'ascii': 'ASCII',
     'utf-8': 'UTF-8',
@@ -474,6 +474,7 @@ class SerialKeyboardEmulator:
                 os.fsync(temp_file.fileno())
             os.replace(temp_path, self.config_path)
         finally:
+            # os.replace 成功時は一時パスが消える。置換前に失敗した場合だけ残骸を削除する。
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.unlink(temp_path)
@@ -854,6 +855,7 @@ class SerialKeyboardEmulator:
             self.logger.error(str(exc))
             return
 
+        # 不正値への警告と重複させないため、形式検証を通過してから存在を確認する。
         if port not in self.available_ports:
             self.logger.warning(f"ポート {port} は現在の一覧に存在しませんが接続を試行します")
 
@@ -873,6 +875,8 @@ class SerialKeyboardEmulator:
                     self.logger.error(
                         f"設定ファイル {self.config_path} への書き込みに失敗しました: {exc}"
                     )
+                    # 永続化前の値へ戻した状態をトレイ表示にも反映する。
+                    self.update_tray_menu()
                     return
 
         self.logger.info(f"シリアルポートを {port} に更新しました。再接続を実行します")
@@ -913,6 +917,8 @@ class SerialKeyboardEmulator:
                     self.logger.error(
                         f"設定ファイル {self.config_path} への書き込みに失敗しました: {exc}"
                     )
+                    # 永続化前の値へ戻した状態をトレイ表示にも反映する。
+                    self.update_tray_menu()
                     return
 
         self.logger.info(f"{key} を {value} に更新しました。再接続を実行します")
@@ -951,6 +957,8 @@ class SerialKeyboardEmulator:
                     self.logger.error(
                         f"設定ファイル {self.config_path} への書き込みに失敗しました: {exc}"
                     )
+                    # 永続化前の値へ戻した状態をトレイ表示にも反映する。
+                    self.update_tray_menu()
                     return
 
         self.logger.info(f"{key} を {value} に更新しました")
@@ -1519,21 +1527,25 @@ def show_error_message(message):
 
 def main():
     """メイン処理"""
-    logger = setup_logging()
-
-    # --- 多重起動防止処理 ---
-    mutex_name = "Global\\ser2key_mutex"
-    _k32 = ctypes.windll.kernel32
-    mutex = _k32.CreateMutexW(None, False, mutex_name)
-    last_error = _k32.GetLastError()
-    ERROR_ALREADY_EXISTS = 183
-
-    if last_error == ERROR_ALREADY_EXISTS:
-        show_error_message("すでに ser2key が起動中です。")
-        sys.exit(0)
-    # ---------------------------------
+    logger = logging.getLogger('ser2key')
+    mutex = None
+    _k32 = None
 
     try:
+        logger = setup_logging()
+
+        # --- 多重起動防止処理 ---
+        mutex_name = "Global\\ser2key_mutex"
+        _k32 = ctypes.windll.kernel32
+        mutex = _k32.CreateMutexW(None, False, mutex_name)
+        last_error = _k32.GetLastError()
+        ERROR_ALREADY_EXISTS = 183
+
+        if last_error == ERROR_ALREADY_EXISTS:
+            show_error_message("すでに ser2key が起動中です。")
+            return
+        # ---------------------------------
+
         emulator = SerialKeyboardEmulator()
         emulator.read_config()
 
@@ -1582,7 +1594,7 @@ def main():
             emulator.cleanup()
 
         # --- ミューテックス解放 ---
-        if mutex:
+        if mutex and _k32:
             _k32.ReleaseMutex(mutex)
             _k32.CloseHandle(mutex)
 

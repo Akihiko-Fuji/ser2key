@@ -20,25 +20,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import codecs
+import configparser
 import ctypes
 from ctypes import wintypes
-import serial
-from serial.tools import list_ports
-import threading
-import time
-import configparser
-import pystray
-from pystray import MenuItem as item
-import sys
-import os
+from contextlib import contextmanager
+from datetime import datetime
 import logging
 from logging.handlers import RotatingFileHandler
-from contextlib import contextmanager
-import codecs
+import os
 import re
-from datetime import datetime
-import subprocess
 import struct
+import sys
+import threading
+import time
+
+import pystray
+from pystray import MenuItem as item
+import serial
+from serial.tools import list_ports
 
 if os.name != 'nt':
     raise OSError('ser2key は Windows 専用のアプリケーションです。')
@@ -173,6 +173,10 @@ S_OK = 0
 S_FALSE = 1
 
 
+class ClipboardError(Exception):
+    """クリップボード操作に失敗した場合の例外"""
+
+
 class _BitmapInfoHeader(ctypes.Structure):
     _fields_ = [
         ('biSize', wintypes.DWORD),
@@ -216,8 +220,8 @@ class ClipboardBackupData:
         self.data_object = data_object
         self.is_empty = is_empty
 
-    # COM オブジェクトの参照カウントを解放
     def release(self):
+        """COM オブジェクトの参照カウントを解放"""
         if self.data_object:
             obj_ptr = ctypes.cast(ctypes.c_void_p(self.data_object), ctypes.POINTER(_IUnknown))
             release = obj_ptr.contents.lpVtbl.contents.Release
@@ -298,9 +302,6 @@ def restore_clipboard(backup):
             clear_clipboard()
     finally:
         backup.release()
-
-class ClipboardError(Exception):
-    """クリップボード操作に失敗した場合の例外"""
 
 
 @contextmanager
@@ -393,8 +394,8 @@ def send_ctrl_v(add_enter=False):
         _key_event(VK_RETURN, key_up=True)
 
 
-# ログ設定を初期化
 def setup_logging():
+    """ログ設定を初期化"""
     storage_dir = _get_preferred_storage_dir()
     try:
         if storage_dir == STORAGE_DIR:
@@ -404,12 +405,13 @@ def setup_logging():
 
     logger = logging.getLogger('ser2key')
     logger.setLevel(logging.INFO)
+    logger.propagate = False
 
     log_file = os.path.join(storage_dir, LOG_FILENAME)
-    log_path = os.path.abspath(log_file)
+    log_path = os.path.normcase(os.path.abspath(log_file))
     handler_exists = any(
         isinstance(handler, RotatingFileHandler) and
-        getattr(handler, 'baseFilename', None) == log_path
+        os.path.normcase(getattr(handler, 'baseFilename', '')) == log_path
         for handler in logger.handlers
     )
 
@@ -511,12 +513,14 @@ class SerialKeyboardEmulator:
         return f"{header}{payload}{footer}"
 
     def _wait_clipboard_update(self, expected_text):
+        ensure_ole_initialized()
         deadline = time.time() + CLIPBOARD_TIMEOUT
         while time.time() < deadline:
             try:
                 if get_clipboard_text() == expected_text:
                     return True
-            except ClipboardError:
+            except ClipboardError as exc:
+                self.logger.debug(f"クリップボード確認中のエラー（リトライします）: {exc}")
                 time.sleep(0.05)
                 continue
             time.sleep(0.05)
@@ -549,8 +553,8 @@ class SerialKeyboardEmulator:
             self._restore_clipboard_safely(clipboard_backup)
 
 
-    # 終了要求または再接続要求を監視しながら待機
     def _wait_for_stop_or_reconnect(self, timeout):
+        """終了要求または再接続要求を監視しながら待機"""
         end_time = time.time() + timeout
 
         while self.is_running and time.time() < end_time:
@@ -562,8 +566,8 @@ class SerialKeyboardEmulator:
                 break
 
 
-    # リソースの解放処理
     def cleanup(self):
+        """リソースの解放処理"""
         self.is_running = False
         self._reconnect_event.set()
 
@@ -584,8 +588,8 @@ class SerialKeyboardEmulator:
                 self.logger.debug(f"トレイアイコン停止時の例外: {exc}")
 
 
-    # デフォルト設定ファイルの作成
     def create_default_config(self):
+        """デフォルト設定ファイルの作成"""
         config = configparser.ConfigParser()
 
         config['serial'] = {
@@ -635,8 +639,8 @@ class SerialKeyboardEmulator:
         raise RuntimeError(f"設定ファイルを作成できませんでした ({message})")
 
 
-    # シリアル通信の設定値を検証
     def validate_serial_config(self, config):
+        """シリアル通信の設定値を検証"""
         baudrate = config['baudrate']
         if baudrate <= 0:
             raise ValueError(f"不正なボーレート: {baudrate}")
@@ -649,8 +653,8 @@ class SerialKeyboardEmulator:
             # ここでもエラーは発生させず、警告のみ
 
 
-    # 利用可能なシリアルポート一覧を更新
     def refresh_available_ports(self, update_menu=True):
+        """利用可能なシリアルポート一覧を更新"""
         ports = [port.device for port in list_ports.comports()]
         ports.sort()
         self.available_ports = ports
@@ -660,21 +664,21 @@ class SerialKeyboardEmulator:
             self.update_tray_menu()
 
 
-    # タスクトレイアイコンを関連付け
     def attach_tray_icon(self, icon):
+        """タスクトレイアイコンを関連付け"""
         self.tray_icon = icon
         self.update_tray_menu()
 
 
-    # 現在選択されているポートかどうかを判定
     def _is_selected_port(self, port):
+        """現在選択されているポートかどうかを判定"""
         with self._lock:
             current = self.serial_config.get('port') if self.serial_config else None
         return current == port
 
 
-    # タスクトレイメニューを更新
     def update_tray_menu(self):
+        """タスクトレイメニューを更新"""
         if not self.tray_icon:
             return
 
@@ -836,8 +840,8 @@ class SerialKeyboardEmulator:
             self.logger.error(f"トレイメニュー更新エラー: {e}")
 
 
-    # 利用するシリアルポートを更新し再接続を要求
     def update_serial_port(self, port):
+        """利用するシリアルポートを更新し再接続を要求"""
         if not self.serial_config:
             self.logger.error("シリアル設定が初期化されていません")
             return
@@ -865,23 +869,19 @@ class SerialKeyboardEmulator:
         self.update_tray_menu()
 
 
-    # シリアル設定値を更新し再接続を要求
     def update_serial_setting(self, key, value):
+        """シリアル設定値を更新し再接続を要求"""
         if not self.serial_config:
             self.logger.error("シリアル設定が初期化されていません")
-            return
-
-        with self._lock:
-            current_value = self.serial_config.get(key)
-
-        if current_value == value:
-            self.logger.info(f"{key} は既に {value} に設定されています")
             return
 
         if key == 'parity' and isinstance(value, str):
             value = value.upper()
 
         with self._lock:
+            if self.serial_config.get(key) == value:
+                self.logger.info(f"{key} は既に {value} に設定されています")
+                return
             self.serial_config[key] = value
             if self._config_parser and 'serial' in self._config_parser and self.config_path:
                 self._config_parser['serial'][key] = str(value)
@@ -897,8 +897,8 @@ class SerialKeyboardEmulator:
         self.update_tray_menu()
 
 
-    # 一般設定値を更新
     def update_settings_setting(self, key, value):
+        """一般設定値を更新"""
         if not self.settings_config:
             self.logger.error("一般設定が初期化されていません")
             return
@@ -911,13 +911,9 @@ class SerialKeyboardEmulator:
                 return
 
         with self._lock:
-            current_value = self.settings_config.get(key)
-
-        if current_value == value:
-            self.logger.info(f"{key} は既に {value} に設定されています")
-            return
-
-        with self._lock:
+            if self.settings_config.get(key) == value:
+                self.logger.info(f"{key} は既に {value} に設定されています")
+                return
             self.settings_config[key] = value
             if self._config_parser and 'settings' in self._config_parser and self.config_path:
                 self._config_parser['settings'][key] = str(value)
@@ -932,14 +928,14 @@ class SerialKeyboardEmulator:
         self.update_tray_menu()
 
 
-    # アプリケーション終了処理
     def stop_application(self, icon, menu_item=None):
+        """アプリケーション終了処理"""
         self.logger.info("ユーザー操作によりアプリケーションを終了します")
         self.cleanup()
 
 
-    # 一般設定の検証
     def validate_settings_config(self, config):
+        """一般設定の検証"""
         encoding_name = config['encoding']
         try:
             normalized = codecs.lookup(encoding_name).name
@@ -949,8 +945,8 @@ class SerialKeyboardEmulator:
         config['encoding'] = normalized
 
 
-    # 設定ファイルを読み込む
     def read_config(self):
+        """設定ファイルを読み込む"""
         config_path = self._resolve_config_path()
 
         if not os.path.exists(config_path):
@@ -1012,8 +1008,8 @@ class SerialKeyboardEmulator:
         except ValueError as e:
             raise ValueError(f"不正な設定値です: {e}")
 
-    # シリアルデータを処理してキーボード入力をシミュレート
     def process_serial_data(self, data):
+        """シリアルデータを処理してキーボード入力をシミュレート"""
         if not data:
             return
 
@@ -1038,8 +1034,8 @@ class SerialKeyboardEmulator:
         else:
             self._update_error_state(True)
 
-    # シリアルポートからデータを読み取り、キーボード入力に変換
     def read_serial_and_type(self):
+        """シリアルポートからデータを読み取り、キーボード入力に変換"""
         while self.is_running:
             try:
                 with self._lock:
@@ -1069,6 +1065,7 @@ class SerialKeyboardEmulator:
                         with self._lock:
                             buffer_duration_ms = self.settings_config.get('buffer_msec', 0) if self.settings_config else 0
 
+                        # buffer_msec が実行中に 0 以下へ変更された場合、残留データを即時フラッシュ
                         if buffer_duration_ms <= 0 and buffer_data:
                             combined = '\n'.join(buffer_data)
                             if combined:
@@ -1082,8 +1079,10 @@ class SerialKeyboardEmulator:
                                 if not data:
                                     pass
                                 elif buffer_duration_ms <= 0:
+                                    # バッファなしモード：受信即時送信
                                     self.process_serial_data(data)
                                 else:
+                                    # バッファモード：時間まで蓄積
                                     if buffer_start_time is None:
                                         buffer_start_time = time.monotonic()
                                         buffer_data = []
@@ -1154,8 +1153,8 @@ class ApplicationMonitor:
         self.emulator = emulator
         self.logger = logging.getLogger('ser2key.monitor')
 
-    # 定期的な状態確認
     def monitor(self):
+        """定期的な状態確認"""
         while self.emulator.is_running:
             try:
                 # アクティビティタイムアウトチェック
@@ -1332,8 +1331,8 @@ class TrayIconManager:
     _BitmapInfo = _BitmapInfo
 
     @staticmethod
-    # デフォルトアイコンを作成
     def create_default_icon():
+        """デフォルトアイコンを作成"""
         width, height = DEFAULT_ICON_SIZE
         data = bytearray()
         for y in range(height):
@@ -1418,8 +1417,8 @@ class TrayIconManager:
             user32.DestroyIcon(hicon)
 
     @staticmethod
-    # アイコン画像を作成または読み込む
     def create_icon_image():
+        """アイコン画像を作成または読み込む"""
         candidate_paths = []
 
         # PyInstaller 互換の _MEIPASS があれば最優先で使用
@@ -1493,29 +1492,15 @@ def show_error_message(message):
     user32.MessageBoxW(None, str(message), "エラー", 0x00000010)
 
 
-# 管理者権限時は通常権限プロセスでトレイアイコンを表示
-def launch_tray_proxy():
-    try:
-        # 標準ユーザーで同じEXEを起動（UAC昇格せず）
-        exe_path = os.path.abspath(sys.argv[0])
-        subprocess.Popen(
-            ['cmd', '/c', 'start', '', exe_path, '--tray-proxy'],
-            shell=False,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-    except Exception as e:
-        logging.getLogger('ser2key').warning(f"トレイプロキシ起動失敗: {e}")
-
-
 # メイン処理
 def main():
     logger = logging.getLogger('ser2key')
 
     # --- 多重起動防止処理 ---
     mutex_name = "Global\\ser2key_mutex"
-    kernel32 = ctypes.windll.kernel32
-    mutex = kernel32.CreateMutexW(None, False, mutex_name)
-    last_error = kernel32.GetLastError()
+    _k32 = ctypes.windll.kernel32
+    mutex = _k32.CreateMutexW(None, False, mutex_name)
+    last_error = _k32.GetLastError()
     ERROR_ALREADY_EXISTS = 183
 
     if last_error == ERROR_ALREADY_EXISTS:
@@ -1573,8 +1558,8 @@ def main():
 
         # --- ミューテックス解放 ---
         if mutex:
-            kernel32.ReleaseMutex(mutex)
-            kernel32.CloseHandle(mutex)
+            _k32.ReleaseMutex(mutex)
+            _k32.CloseHandle(mutex)
 
 if __name__ == "__main__":
 

@@ -21,6 +21,11 @@ class OutputTemplateTests(unittest.TestCase):
     def test_preserves_unknown_escape_sequences(self):
         self.assertEqual(decode_output_template(r'C:\queue\item'), r'C:\queue\item')
 
+    def test_decodes_all_documented_escape_sequences(self):
+        escaped = r'\\\a\b\f\n\r\t\v\x41\u3001\U0001F600'
+        expected = '\\' + '\a\b\f\n\r\t\v' + 'A、😀'
+        self.assertEqual(decode_output_template(escaped), expected)
+
     def test_preserves_incomplete_escape_sequences(self):
         self.assertEqual(decode_output_template(r'末尾\u12'), r'末尾\u12')
 

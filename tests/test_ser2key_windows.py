@@ -1,3 +1,4 @@
+import ctypes
 import logging
 import os
 import threading
@@ -8,6 +9,30 @@ from ser2key_core import create_config_parser
 
 if os.name == 'nt':
     import ser2key
+
+
+@unittest.skipUnless(os.name == 'nt', 'Windows 専用アプリケーションのテスト')
+class WindowsApiSignatureTests(unittest.TestCase):
+    def test_pointer_returning_apis_use_pointer_sized_types(self):
+        pointer_functions = (
+            ser2key.kernel32.GlobalAlloc,
+            ser2key.kernel32.GlobalLock,
+            ser2key.kernel32.CreateMutexW,
+            ser2key.user32.GetClipboardData,
+            ser2key.user32.SetClipboardData,
+            ser2key.user32.LoadImageW,
+            ser2key.gdi32.CreateCompatibleDC,
+            ser2key.gdi32.CreateDIBSection,
+            ser2key.gdi32.SelectObject,
+        )
+
+        for function in pointer_functions:
+            with self.subTest(function=function.__name__):
+                self.assertEqual(
+                    ctypes.sizeof(function.restype),
+                    ctypes.sizeof(ctypes.c_void_p),
+                )
+                self.assertIsNot(function.restype, ctypes.c_int)
 
 
 @unittest.skipUnless(os.name == 'nt', 'Windows 専用アプリケーションのテスト')
@@ -91,6 +116,26 @@ class ConfigurationUpdateTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == 'nt', 'Windows 専用アプリケーションのテスト')
 class StartupErrorTests(unittest.TestCase):
+    def test_mutex_creation_failure_stops_startup(self):
+        logger = Mock(spec=logging.Logger)
+
+        with (
+            patch.object(ser2key, 'setup_logging', return_value=logger),
+            patch.object(ser2key.kernel32, 'SetLastError'),
+            patch.object(ser2key.kernel32, 'CreateMutexW', return_value=None),
+            patch.object(ser2key.kernel32, 'GetLastError', return_value=5),
+            patch.object(ser2key.kernel32, 'CloseHandle') as close_handle,
+            patch.object(ser2key, 'show_error_message') as show_error_message,
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            ser2key.main()
+
+        self.assertEqual(exit_context.exception.code, 1)
+        logger.error.assert_called_once()
+        self.assertIn('多重起動防止ミューテックス', logger.error.call_args.args[0])
+        show_error_message.assert_called_once()
+        close_handle.assert_not_called()
+
     def test_logging_setup_failure_uses_fallback_logger(self):
         fallback_logger = Mock(spec=logging.Logger)
         error = RuntimeError('log directory unavailable')

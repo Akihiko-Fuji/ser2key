@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ser2key"
+version = "1.7.0"
+description = "Convert Windows serial input into keyboard paste events"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Akihiko Fujita" }]
+dependencies = [
+    "pyserial>=3.5,<4",
+    "pystray>=0.19.5,<1",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Win32 (MS Windows)",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+]
+
+[project.scripts]
+ser2key = "ser2key:main"
+
+[tool.setuptools]
+py-modules = ["ser2key", "ser2key_core"]

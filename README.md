@@ -71,7 +71,41 @@ Windows（テスト済み）– システムトレイ対応
 あらゆるシリアルデバイスに対応 – Windows 上で COM ポートとして認識される RS-232C、USB シリアルアダプタ、Bluetooth SPP など。
 
 
+## ソースからの実行
+
+### 必要環境
+
+- Windows 10 / 11（64-bit）
+- Python 3.9 以上
+- Windows で COM ポートとして認識されるシリアル機器
+
+### セットアップ
+
+```powershell
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+py -m pip install --upgrade pip
+py -m pip install -r requirements.txt
+py ser2key.py
+```
+
+初回起動時に設定ファイルが存在しない場合は、自動的に `config.ini` を作成します。ログは `%APPDATA%\ser2key\ser2key.log` に保存され、最大 512 KiB × 4 世代でローテーションされます。受信内容はログへ記録されるため、個人情報や機密情報を扱う場合はログファイルの保管・アクセス権限に注意してください。
+
+## 開発・リリース確認
+
+プラットフォーム非依存ロジックのテストは、Windows 以外でも実行できます。
+
+```bash
+python -m unittest discover -s tests -v
+python -m compileall -q ser2key.py ser2key_core.py tests
+```
+
+Windows 上では、実機または仮想 COM ポートを使用して、接続・再接続、トレイメニュー、Unicode 貼り付け、クリップボード復元、終了処理も確認してください。
+
 ### 更新履歴
+1.7.0
+日本語テンプレートの文字化けを修正し、設定検証、貼り付け時のクリップボード競合対策、自動テスト、Python パッケージ情報を追加しました。
+
 1.6
 タスクトレイアイコンが出てこない環境があったので、修正しました。
 

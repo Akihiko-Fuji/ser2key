@@ -110,6 +110,9 @@ python -m twine check dist/*
 Windows 上では、実機または仮想 COM ポートを使用して、接続・再接続、トレイメニュー、Unicode 貼り付け、クリップボード復元、終了処理も確認してください。
 
 ### 更新履歴
+1.7.2
+64-bit Windows で Win32 ハンドルが切り詰められる問題を修正し、クリップボード、アイコン、多重起動防止、OLE 初期化のエラー処理を強化しました。
+
 1.7.1
 設定テンプレートとシリアル設定検証の回帰を修正し、設定保存失敗時のロールバック、入力値検証、配布物検証、タグベースの Windows 実行ファイル自動ビルドを追加しました。
 
@@ -142,4 +145,4 @@ Windows に特化し、使用するライブラリを見直すことで実行フ
 
 Windows x64 実行ファイルと設定ファイルを含む最新版は、[GitHub Releases](https://github.com/Akihiko-Fuji/ser2key/releases/latest) から `ser2key-windows-x64.zip` をダウンロードしてください。
 
-バージョンタグ（例: `v1.7.1`）を push すると、GitHub Actions がテスト済みの Windows 実行ファイルをビルドし、Release に添付します。手動実行時は Actions の成果物として同じ ZIP を取得できます。
+バージョンタグ（例: `v1.7.2`）を push すると、GitHub Actions がテスト済みの Windows 実行ファイルをビルドし、Release に添付します。手動実行時は Actions の成果物として同じ ZIP を取得できます。

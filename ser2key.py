@@ -3,7 +3,7 @@
 """
 Serial to keyboard:
 Author: Akihiko Fujita
-Version: 1.7.1
+Version: 1.7.2
 
 Copyright 2025-2026 Akihiko Fujita
 
@@ -153,15 +153,6 @@ kernel32 = ctypes.windll.kernel32
 gdi32 = ctypes.windll.gdi32
 ole32 = ctypes.OleDLL('ole32')
 
-ole32.OleInitialize.restype = ctypes.c_long
-ole32.OleInitialize.argtypes = [ctypes.c_void_p]
-ole32.OleGetClipboard.restype = ctypes.c_long
-ole32.OleGetClipboard.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
-ole32.OleSetClipboard.restype = ctypes.c_long
-ole32.OleSetClipboard.argtypes = [ctypes.c_void_p]
-ole32.OleFlushClipboard.restype = ctypes.c_long
-ole32.OleFlushClipboard.argtypes = []
-
 S_OK = 0
 S_FALSE = 1
 
@@ -205,6 +196,92 @@ class _IUnknown(ctypes.Structure):
     _fields_ = [('lpVtbl', ctypes.POINTER(_IUnknownVTable))]
 
 
+def _configure_windows_api():
+    """64-bit Windows でもハンドルを切り詰めないよう API 型を定義する。"""
+    handle = wintypes.HANDLE
+    void_pointer = ctypes.c_void_p
+
+    ole32.OleInitialize.restype = ctypes.c_long
+    ole32.OleInitialize.argtypes = [void_pointer]
+    ole32.OleUninitialize.restype = None
+    ole32.OleUninitialize.argtypes = []
+    ole32.OleGetClipboard.restype = ctypes.c_long
+    ole32.OleGetClipboard.argtypes = [ctypes.POINTER(void_pointer)]
+    ole32.OleSetClipboard.restype = ctypes.c_long
+    ole32.OleSetClipboard.argtypes = [void_pointer]
+    ole32.OleFlushClipboard.restype = ctypes.c_long
+    ole32.OleFlushClipboard.argtypes = []
+
+    user32.EnumClipboardFormats.restype = wintypes.UINT
+    user32.EnumClipboardFormats.argtypes = [wintypes.UINT]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.CloseClipboard.restype = wintypes.BOOL
+    user32.CloseClipboard.argtypes = []
+    user32.GetClipboardData.restype = handle
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.argtypes = []
+    user32.SetClipboardData.restype = handle
+    user32.SetClipboardData.argtypes = [wintypes.UINT, handle]
+    user32.MapVirtualKeyW.restype = wintypes.UINT
+    user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
+    user32.keybd_event.restype = None
+    user32.keybd_event.argtypes = [
+        wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_size_t
+    ]
+    user32.LoadImageW.restype = handle
+    user32.LoadImageW.argtypes = [
+        handle, wintypes.LPCWSTR, wintypes.UINT,
+        ctypes.c_int, ctypes.c_int, wintypes.UINT,
+    ]
+    user32.DestroyIcon.restype = wintypes.BOOL
+    user32.DestroyIcon.argtypes = [handle]
+    user32.DrawIconEx.restype = wintypes.BOOL
+    user32.DrawIconEx.argtypes = [
+        handle, ctypes.c_int, ctypes.c_int, handle,
+        ctypes.c_int, ctypes.c_int, wintypes.UINT, handle, wintypes.UINT,
+    ]
+    user32.MessageBoxW.restype = ctypes.c_int
+    user32.MessageBoxW.argtypes = [
+        wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT
+    ]
+
+    kernel32.SetLastError.restype = None
+    kernel32.SetLastError.argtypes = [wintypes.DWORD]
+    kernel32.GetLastError.restype = wintypes.DWORD
+    kernel32.GetLastError.argtypes = []
+    kernel32.GlobalAlloc.restype = handle
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalLock.restype = void_pointer
+    kernel32.GlobalLock.argtypes = [handle]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalUnlock.argtypes = [handle]
+    kernel32.GlobalFree.restype = handle
+    kernel32.GlobalFree.argtypes = [handle]
+    kernel32.CreateMutexW.restype = handle
+    kernel32.CreateMutexW.argtypes = [void_pointer, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [handle]
+
+    gdi32.CreateCompatibleDC.restype = handle
+    gdi32.CreateCompatibleDC.argtypes = [handle]
+    gdi32.CreateDIBSection.restype = handle
+    gdi32.CreateDIBSection.argtypes = [
+        handle, ctypes.POINTER(_BitmapInfo), wintypes.UINT,
+        ctypes.POINTER(void_pointer), handle, wintypes.DWORD,
+    ]
+    gdi32.SelectObject.restype = handle
+    gdi32.SelectObject.argtypes = [handle, handle]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+    gdi32.DeleteObject.argtypes = [handle]
+    gdi32.DeleteDC.restype = wintypes.BOOL
+    gdi32.DeleteDC.argtypes = [handle]
+
+
+_configure_windows_api()
+
+
 class ClipboardBackupData:
     """保持しているクリップボードデータのバックアップ"""
 
@@ -231,7 +308,7 @@ def ensure_ole_initialized():
 
     hr = ole32.OleInitialize(None)
     if hr not in (S_OK, S_FALSE):
-        raise ClipboardError(f"OLE の初期化に失敗しました (HRESULT=0x{hr:08X})")
+        raise ClipboardError(f"OLE の初期化に失敗しました (HRESULT=0x{hr & 0xFFFFFFFF:08X})")
 
     _ole_thread_state.initialized = True
 
@@ -1548,8 +1625,15 @@ def main():
 
         # --- 多重起動防止処理 ---
         mutex_name = "Global\\ser2key_mutex"
-        _k32 = ctypes.windll.kernel32
+        _k32 = kernel32
+        _k32.SetLastError(0)
         mutex = _k32.CreateMutexW(None, False, mutex_name)
+        if not mutex:
+            error_code = _k32.GetLastError()
+            raise OSError(
+                error_code,
+                f"多重起動防止ミューテックスを作成できませんでした: {error_code}",
+            )
         last_error = _k32.GetLastError()
         ERROR_ALREADY_EXISTS = 183
 
@@ -1563,8 +1647,15 @@ def main():
 
         # --- COM初期化済みトレイスレッド関数 ---
         def tray_thread():
+            ole_initialized = False
             try:
-                ole32.OleInitialize(None)  # COM初期化（管理者権限でも安定）
+                hr = ole32.OleInitialize(None)  # COM初期化（管理者権限でも安定）
+                if hr not in (S_OK, S_FALSE):
+                    raise RuntimeError(
+                        "トレイスレッドの OLE 初期化に失敗しました "
+                        f"(HRESULT=0x{hr & 0xFFFFFFFF:08X})"
+                    )
+                ole_initialized = True
                 ensure_pystray_image_support()
                 icon = pystray.Icon("ser2key")
                 icon.icon = TrayIconManager.create_icon_image()
@@ -1576,11 +1667,10 @@ def main():
                 icon.run()
             except Exception as e:
                 logger.error(f"トレイアイコンスレッドエラー: {e}")
+                emulator.cleanup()
             finally:
-                try:
+                if ole_initialized:
                     ole32.OleUninitialize()
-                except Exception:
-                    pass
 
         # --- トレイスレッド起動 ---
         tray_thread_obj = threading.Thread(target=tray_thread, daemon=True)
@@ -1607,7 +1697,6 @@ def main():
 
         # --- ミューテックス解放 ---
         if mutex and _k32:
-            _k32.ReleaseMutex(mutex)
             _k32.CloseHandle(mutex)
 
 if __name__ == "__main__":

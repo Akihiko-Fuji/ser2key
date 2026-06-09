@@ -1,4 +1,5 @@
 import ctypes
+from ctypes import wintypes
 import logging
 import os
 import threading
@@ -34,6 +35,53 @@ class WindowsApiSignatureTests(unittest.TestCase):
                 )
                 self.assertIsNot(function.restype, ctypes.c_int)
 
+    def test_locale_apis_are_configured_on_kernel32(self):
+        self.assertIs(
+            ser2key.kernel32.GetUserDefaultUILanguage.restype,
+            wintypes.WORD,
+        )
+        self.assertEqual(
+            ser2key.kernel32.GetUserDefaultUILanguage.argtypes,
+            [],
+        )
+        self.assertIs(
+            ser2key.kernel32.GetUserDefaultLocaleName.restype,
+            ctypes.c_int,
+        )
+        self.assertEqual(
+            ser2key.kernel32.GetUserDefaultLocaleName.argtypes,
+            [wintypes.LPWSTR, ctypes.c_int],
+        )
+
+
+@unittest.skipUnless(os.name == 'nt', 'Windows 専用アプリケーションのテスト')
+class LanguageDetectionTests(unittest.TestCase):
+    def setUp(self):
+        self.emulator = ser2key.SerialKeyboardEmulator.__new__(
+            ser2key.SerialKeyboardEmulator
+        )
+        self.emulator.logger = Mock()
+
+    def test_fallback_warning_is_english(self):
+        with (
+            patch.object(
+                ser2key.kernel32,
+                'GetUserDefaultUILanguage',
+                return_value=0,
+            ),
+            patch.object(
+                ser2key.kernel32,
+                'GetUserDefaultLocaleName',
+                return_value=0,
+            ),
+        ):
+            language = self.emulator._detect_windows_language()
+
+        self.assertEqual(language, 'en')
+        self.emulator.logger.warning.assert_called_once_with(
+            'Unable to detect the Windows display language; using English.'
+        )
+
 
 @unittest.skipUnless(os.name == 'nt', 'Windows 専用アプリケーションのテスト')
 class ConfigurationUpdateTests(unittest.TestCase):
@@ -60,6 +108,7 @@ class ConfigurationUpdateTests(unittest.TestCase):
             'add_enter': True,
             'encoding': 'shift_jis',
             'buffer_msec': 0,
+            'language': 'ja',
         }
         self.emulator._config_parser = create_config_parser()
         self.emulator._config_parser.read_dict({
@@ -103,6 +152,7 @@ class ConfigurationUpdateTests(unittest.TestCase):
             'encoding': 'not-a-codec',
             'buffer_msec': -1,
             'add_enter': 'yes',
+            'language': 'fr',
         }
 
         for key, value in invalid_values.items():

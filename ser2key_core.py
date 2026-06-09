@@ -10,6 +10,8 @@ from datetime import datetime
 import re
 from typing import Final, Optional
 
+from ser2key_i18n import normalize_language
+
 BAUDRATE_OPTIONS: Final[tuple[int, ...]] = (
     1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200
 )
@@ -129,6 +131,10 @@ def validate_settings_config(config: MutableMapping[str, object]) -> None:
             f"buffer_msec は 0 から {MAX_BUFFER_MSEC} の整数で指定してください: "
             f"{buffer_msec}"
         )
+
+    language = config.get('language')
+    if language is not None:
+        config['language'] = normalize_language(str(language))
 
     add_enter = config.get('add_enter')
     if not isinstance(add_enter, bool):

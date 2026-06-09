@@ -51,6 +51,14 @@ from ser2key_core import (
     validate_serial_config as validate_serial_values,
     validate_settings_config as validate_settings_values,
 )
+from ser2key_i18n import (
+    LANGUAGE_LABELS,
+    LANGUAGE_OPTIONS,
+    language_from_locale,
+    language_from_windows_lang_id,
+    parity_label,
+    translate,
+)
 
 if os.name != 'nt':
     raise OSError('ser2key は Windows 専用のアプリケーションです。')
@@ -110,10 +118,7 @@ def _get_storage_directory():
 
 APP_DIR = _get_executable_directory()
 STORAGE_DIR = _get_storage_directory()
-CONFIG_CANDIDATE_PATHS = [
-    os.path.join(APP_DIR, 'config.ini'),
-    os.path.join(STORAGE_DIR, 'config.ini'),
-]
+CONFIG_PATH = os.path.join(APP_DIR, 'config.ini')
 LOG_FILENAME = 'ser2key.log'
 
 
@@ -243,6 +248,10 @@ def _configure_windows_api():
         ctypes.c_int, ctypes.c_int, wintypes.UINT, handle, wintypes.UINT,
     ]
     user32.MessageBoxW.restype = ctypes.c_int
+    user32.GetUserDefaultUILanguage.restype = wintypes.LANGID
+    user32.GetUserDefaultUILanguage.argtypes = []
+    user32.GetUserDefaultLocaleName.restype = ctypes.c_int
+    user32.GetUserDefaultLocaleName.argtypes = [wintypes.LPWSTR, ctypes.c_int]
     user32.MessageBoxW.argtypes = [
         wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT
     ]
@@ -520,20 +529,34 @@ class SerialKeyboardEmulator:
         self._cleanup_event = threading.Event()
 
     def _resolve_config_path(self):
-        for path in CONFIG_CANDIDATE_PATHS:
-            if os.path.exists(path):
-                if path.endswith('config.ini') and path != CONFIG_CANDIDATE_PATHS[0]:
-                    self.logger.info(f"設定ファイルを互換パスから読み込みます: {path}")
-                return path
-        return CONFIG_CANDIDATE_PATHS[0]
+        return CONFIG_PATH
+
+    def _detect_windows_language(self):
+        """Windows のユーザーロケールを4つの対応言語へ変換する。"""
+        language_id = user32.GetUserDefaultUILanguage()
+        if language_id:
+            return language_from_windows_lang_id(language_id)
+
+        locale_buffer = ctypes.create_unicode_buffer(85)
+        if user32.GetUserDefaultLocaleName(locale_buffer, len(locale_buffer)):
+            return language_from_locale(locale_buffer.value)
+        self.logger.warning("Windows の表示言語を取得できなかったため英語を使用します")
+        return language_from_locale(None)
+
+    def _get_language(self):
+        with self._lock:
+            if self.settings_config:
+                return self.settings_config.get('language', 'en')
+        return 'en'
+
+    def _t(self, key, **values):
+        return translate(self._get_language(), key, **values)
 
     def _persist_config(self):
         if not self._config_parser or not self.config_path:
             return
 
         directory = os.path.dirname(self.config_path)
-        if directory and not os.path.exists(directory):
-            os.makedirs(directory, exist_ok=True)
 
         temp_path = None
         try:
@@ -684,7 +707,8 @@ class SerialKeyboardEmulator:
         config['settings'] = {
             'add_enter': 'true',
             'encoding': 'shift_jis',
-            'buffer_msec': '0'
+            'buffer_msec': '0',
+            'language': self._detect_windows_language(),
         }
 
         config['output'] = {
@@ -694,29 +718,19 @@ class SerialKeyboardEmulator:
 
         self._config_parser = config
 
-        errors = []
-        for candidate in CONFIG_CANDIDATE_PATHS:
-            self.config_path = candidate
-            try:
-                self._persist_config()
-            except OSError as exc:
-                errors.append((candidate, exc))
-                self.logger.warning(
-                    f"設定ファイル {candidate} を作成できませんでした: {exc}"
-                )
-                continue
+        self.config_path = CONFIG_PATH
+        try:
+            self._persist_config()
+        except OSError as exc:
+            raise RuntimeError(
+                f"設定ファイル {CONFIG_PATH} を作成できませんでした: {exc}"
+            ) from exc
 
-            self.logger.info(f"デフォルト設定ファイルを作成しました ({candidate})")
-            self.output_config = {
-                'header_template': '',
-                'footer_template': '',
-            }
-            return
-
-        message = "; ".join(
-            f"{path}: {exc}" for path, exc in errors
-        ) or '未知の理由'
-        raise RuntimeError(f"設定ファイルを作成できませんでした ({message})")
+        self.logger.info(f"デフォルト設定ファイルを作成しました ({CONFIG_PATH})")
+        self.output_config = {
+            'header_template': '',
+            'footer_template': '',
+        }
 
 
     def validate_serial_config(self, config):
@@ -809,7 +823,7 @@ class SerialKeyboardEmulator:
                     )
                 )
             if not menu_items:
-                menu_items.append(item('選択肢なし', None, enabled=False))
+                menu_items.append(item(self._t('no_options'), None, enabled=False))
             return item(label, pystray.Menu(*menu_items))
 
         def get_serial_current(key):
@@ -823,8 +837,14 @@ class SerialKeyboardEmulator:
         def format_encoding(value):
             return ENCODING_LABELS.get(value, value)
 
+        def format_parity(value):
+            return parity_label(self._get_language(), value)
+
+        def format_language(value):
+            return LANGUAGE_LABELS.get(value, value)
+
         menu_definition = [
-            item('ポート一覧を更新', refresh_ports_action),
+            item(self._t('refresh_ports'), refresh_ports_action),
             pystray.Menu.SEPARATOR
         ]
 
@@ -844,62 +864,63 @@ class SerialKeyboardEmulator:
 
                 menu_definition.append(
                     item(
-                        f'接続: {port}',
+                        self._t('connect', port=port),
                         make_select_action(port),
                         checked=make_checked(port)
                     )
                 )
         else:
-            menu_definition.append(item('ポートが見つかりません', None, enabled=False))
+            menu_definition.append(item(self._t('no_ports'), None, enabled=False))
 
         menu_definition.extend([
             pystray.Menu.SEPARATOR,
             item(
-                'シリアル設定',
+                self._t('serial_settings'),
                 pystray.Menu(
                     build_option_menu(
-                        'ボーレート',
+                        self._t('baudrate'),
                         'baudrate',
                         BAUDRATE_OPTIONS,
                         config_getter=get_serial_current,
                         update_handler=self.update_serial_setting
                     ),
                     build_option_menu(
-                        'データ長',
+                        self._t('bytesize'),
                         'bytesize',
                         BYTESIZE_OPTIONS,
                         config_getter=get_serial_current,
                         update_handler=self.update_serial_setting
                     ),
                     build_option_menu(
-                        'パリティ',
+                        self._t('parity'),
                         'parity',
                         PARITY_OPTIONS,
                         config_getter=get_serial_current,
-                        update_handler=self.update_serial_setting
+                        update_handler=self.update_serial_setting,
+                        formatter=format_parity
                     ),
                     build_option_menu(
-                        'ストップビット',
+                        self._t('stopbits'),
                         'stopbits',
                         STOPBITS_OPTIONS,
                         config_getter=get_serial_current,
                         update_handler=self.update_serial_setting
                     ),
                     build_option_menu(
-                        'タイムアウト',
+                        self._t('timeout'),
                         'timeout',
                         TIMEOUT_OPTIONS,
-                        unit='秒',
+                        unit=self._t('seconds'),
                         config_getter=get_serial_current,
                         update_handler=self.update_serial_setting
                     ),
                 )
             ),
             item(
-                'デコード設定',
+                self._t('decode_settings'),
                 pystray.Menu(
                     build_option_menu(
-                        '文字コード',
+                        self._t('encoding'),
                         'encoding',
                         ENCODING_OPTIONS,
                         config_getter=get_settings_current,
@@ -908,8 +929,16 @@ class SerialKeyboardEmulator:
                     ),
                 )
             ),
+            build_option_menu(
+                self._t('language'),
+                'language',
+                LANGUAGE_OPTIONS,
+                config_getter=get_settings_current,
+                update_handler=self.update_settings_setting,
+                formatter=format_language,
+            ),
             pystray.Menu.SEPARATOR,
-            item('終了', self.stop_application)
+            item(self._t('exit'), self.stop_application)
         ])
 
         try:
@@ -1104,7 +1133,8 @@ class SerialKeyboardEmulator:
             self.settings_config = {
                 'add_enter': config.getboolean('settings', 'add_enter', fallback=True),
                 'encoding': config.get('settings', 'encoding', fallback='shift_jis'),
-                'buffer_msec': config.getint('settings', 'buffer_msec', fallback=0)
+                'buffer_msec': config.getint('settings', 'buffer_msec', fallback=0),
+                'language': config.get('settings', 'language', fallback=None),
             }
 
             raw_header = config.get('output', 'header', fallback='')
@@ -1114,12 +1144,19 @@ class SerialKeyboardEmulator:
                 'footer_template': self._decode_template(raw_footer, 'footer'),
             }
 
+            language_was_missing = self.settings_config['language'] is None
+            if language_was_missing:
+                self.settings_config['language'] = self._detect_windows_language()
+
             self.validate_serial_config(self.serial_config)
             self.validate_settings_config(self.settings_config)
 
             if self._config_parser and self.config_path:
                 try:
                     self._config_parser['settings']['encoding'] = self.settings_config['encoding']
+                    self._config_parser['settings']['language'] = self.settings_config['language']
+                    if language_was_missing:
+                        self._persist_config()
                 except KeyError:
                     pass
 
@@ -1172,7 +1209,7 @@ class SerialKeyboardEmulator:
 
                 with serial.Serial(**serial_kwargs) as ser:
                     if self.tray_icon:
-                        self.tray_icon.title = f"ser2key - 接続中 ({port})"
+                        self.tray_icon.title = f"ser2key - {self._t('connected', port=port)}"
                     self.logger.info("シリアルポートに接続しました")
                     with self._lock:
                         self.error_count = 0
@@ -1244,21 +1281,21 @@ class SerialKeyboardEmulator:
 
             except serial.SerialException as e:
                 if self.tray_icon:
-                    self.tray_icon.title = f"ser2key - 接続失敗 ({e})"
+                    self.tray_icon.title = f"ser2key - {self._t('connection_failed', error=e)}"
                 self.logger.error(f"シリアル通信エラー: {e}")
                 with self._lock:
                     self.error_count += 1
                 self._wait_for_stop_or_reconnect(RECONNECT_DELAY)
             except Exception as e:
                 if self.tray_icon:
-                    self.tray_icon.title = f"ser2key - エラー ({e})"
+                    self.tray_icon.title = f"ser2key - {self._t('error', error=e)}"
                 self.logger.error(f"予期せぬエラー: {e}")
                 with self._lock:
                     self.error_count += 1
                 self._wait_for_stop_or_reconnect(RECONNECT_DELAY)
             finally:
                 if self.tray_icon and self.is_running:
-                    self.tray_icon.title = "ser2key - 切断"
+                    self.tray_icon.title = f"ser2key - {self._t('disconnected')}"
 
             if self._reconnect_event.is_set():
                 self._reconnect_event.clear()
@@ -1659,7 +1696,7 @@ def main():
                 ensure_pystray_image_support()
                 icon = pystray.Icon("ser2key")
                 icon.icon = TrayIconManager.create_icon_image()
-                icon.title = "ser2key - 初期化中"
+                icon.title = f"ser2key - {emulator._t('initializing')}"
 
                 emulator.refresh_available_ports(update_menu=False)
                 emulator.attach_tray_icon(icon)

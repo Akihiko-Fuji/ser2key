@@ -33,4 +33,4 @@ dev = [
 ser2key = "ser2key:main"
 
 [tool.setuptools]
-py-modules = ["ser2key", "ser2key_core"]
+py-modules = ["ser2key", "ser2key_core", "ser2key_i18n"]

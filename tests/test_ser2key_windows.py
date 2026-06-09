@@ -60,6 +60,7 @@ class ConfigurationUpdateTests(unittest.TestCase):
             'add_enter': True,
             'encoding': 'shift_jis',
             'buffer_msec': 0,
+            'language': 'ja',
         }
         self.emulator._config_parser = create_config_parser()
         self.emulator._config_parser.read_dict({
@@ -103,6 +104,7 @@ class ConfigurationUpdateTests(unittest.TestCase):
             'encoding': 'not-a-codec',
             'buffer_msec': -1,
             'add_enter': 'yes',
+            'language': 'fr',
         }
 
         for key, value in invalid_values.items():

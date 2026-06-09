@@ -3,7 +3,7 @@
 """
 Serial to keyboard:
 Author: Akihiko Fujita
-Version: 1.7.2
+Version: 1.7.3
 
 Copyright 2025-2026 Akihiko Fujita
 
@@ -252,7 +252,8 @@ def _configure_windows_api():
         wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT
     ]
 
-    kernel32.GetUserDefaultUILanguage.restype = wintypes.LANGID
+    # LANGID is a WORD. wintypes.LANGID is unavailable on supported Python 3.9.
+    kernel32.GetUserDefaultUILanguage.restype = wintypes.WORD
     kernel32.GetUserDefaultUILanguage.argtypes = []
     kernel32.GetUserDefaultLocaleName.restype = ctypes.c_int
     kernel32.GetUserDefaultLocaleName.argtypes = [wintypes.LPWSTR, ctypes.c_int]

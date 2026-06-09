@@ -38,7 +38,7 @@ class WindowsApiSignatureTests(unittest.TestCase):
     def test_locale_apis_are_configured_on_kernel32(self):
         self.assertIs(
             ser2key.kernel32.GetUserDefaultUILanguage.restype,
-            wintypes.LANGID,
+            wintypes.WORD,
         )
         self.assertEqual(
             ser2key.kernel32.GetUserDefaultUILanguage.argtypes,

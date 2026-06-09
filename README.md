@@ -103,9 +103,9 @@ py ser2key.py
 
 ```bash
 python -m pip install -e ".[dev]"
-ruff check ser2key.py ser2key_core.py tests
+ruff check ser2key.py ser2key_core.py ser2key_i18n.py tests
 python -m unittest discover -s tests -v
-python -m compileall -q ser2key.py ser2key_core.py tests
+python -m compileall -q ser2key.py ser2key_core.py ser2key_i18n.py tests
 python -m build
 python -m twine check dist/*
 ```
@@ -113,6 +113,9 @@ python -m twine check dist/*
 Windows 上では、実機または仮想 COM ポートを使用して、接続・再接続、トレイメニュー、Unicode 貼り付け、クリップボード復元、終了処理も確認してください。
 
 ### 更新履歴
+1.7.3
+タスクトレイの日本語・英語・韓国語・中国語対応、パリティ表示のローカライズ、Windows表示言語の初回自動判定、および実行ファイルと同じ階層への `config.ini` 保存に対応しました。WindowsロケールAPIの参照先とPython 3.9互換性も修正しました。
+
 1.7.2
 64-bit Windows で Win32 ハンドルが切り詰められる問題を修正し、クリップボード、アイコン、多重起動防止、OLE 初期化のエラー処理を強化しました。
 
@@ -148,4 +151,4 @@ Windows に特化し、使用するライブラリを見直すことで実行フ
 
 Windows x64 実行ファイルと設定ファイルを含む最新版は、[GitHub Releases](https://github.com/Akihiko-Fuji/ser2key/releases/latest) から `ser2key-windows-x64.zip` をダウンロードしてください。
 
-バージョンタグ（例: `v1.7.2`）を push すると、GitHub Actions がテスト済みの Windows 実行ファイルをビルドし、Release に添付します。手動実行時は Actions の成果物として同じ ZIP を取得できます。
+バージョンタグ（例: `v1.7.3`）を push すると、GitHub Actions がテスト済みの Windows 実行ファイルをビルドし、Release に添付します。手動実行時は Actions の成果物として同じ ZIP を取得できます。

@@ -3,6 +3,7 @@ import unittest
 from datetime import datetime
 
 from ser2key_core import (
+    ENCODING_OPTIONS,
     create_config_parser,
     decode_output_template,
     render_output_template,
@@ -104,6 +105,19 @@ class OutputTemplateTests(unittest.TestCase):
         now = datetime(2026, 6, 8, 14, 5, 9)
         self.assertEqual(render_output_template('{USER} {DATE}', now), '{USER} 2026-06-08')
 
+
+class SerialDataDecodingTests(unittest.TestCase):
+    def test_includes_korean_and_chinese_legacy_encodings(self):
+        self.assertIn('euc_kr', ENCODING_OPTIONS)
+        self.assertIn('gb18030', ENCODING_OPTIONS)
+
+    def test_decodes_korean_euc_kr_data(self):
+        encoded = b'\xc7\xd1\xb1\xb9\xbe\xee'
+        self.assertEqual(encoded.decode('euc_kr'), '한국어')
+
+    def test_decodes_chinese_gb18030_data(self):
+        encoded = b'\xd6\xd0\xce\xc4'
+        self.assertEqual(encoded.decode('gb18030'), '中文')
 
 
 class ConfigurationValidationTests(unittest.TestCase):

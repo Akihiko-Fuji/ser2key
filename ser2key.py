@@ -70,6 +70,8 @@ ICON_FILES = ['f.ico']
 APP_NAME = 'ser2key'
 ENCODING_LABELS: dict[str, str] = {
     'shift_jis': 'Shift-JIS',
+    'euc_kr': 'EUC-KR',
+    'gb18030': 'GB18030',
     'ascii': 'ASCII',
     'utf-8': 'UTF-8',
 }

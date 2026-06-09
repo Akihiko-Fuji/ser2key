@@ -19,7 +19,9 @@ BYTESIZE_OPTIONS: Final[tuple[int, ...]] = (5, 6, 7, 8)
 PARITY_OPTIONS: Final[tuple[str, ...]] = ('N', 'E', 'O', 'M', 'S')
 STOPBITS_OPTIONS: Final[tuple[float, ...]] = (1, 1.5, 2)
 TIMEOUT_OPTIONS: Final[tuple[float, ...]] = (0.1, 0.5, 1, 2, 5)
-ENCODING_OPTIONS: Final[tuple[str, ...]] = ('shift_jis', 'ascii', 'utf-8')
+ENCODING_OPTIONS: Final[tuple[str, ...]] = (
+    'shift_jis', 'euc_kr', 'gb18030', 'ascii', 'utf-8'
+)
 MAX_BUFFER_MSEC: Final = 60_000
 
 DATETIME_TOKEN_PATTERN = re.compile(r'\{(DATE|TIME|DATETIME)(?::([^}]*))?\}')

@@ -248,14 +248,14 @@ def _configure_windows_api():
         ctypes.c_int, ctypes.c_int, wintypes.UINT, handle, wintypes.UINT,
     ]
     user32.MessageBoxW.restype = ctypes.c_int
-    user32.GetUserDefaultUILanguage.restype = wintypes.LANGID
-    user32.GetUserDefaultUILanguage.argtypes = []
-    user32.GetUserDefaultLocaleName.restype = ctypes.c_int
-    user32.GetUserDefaultLocaleName.argtypes = [wintypes.LPWSTR, ctypes.c_int]
     user32.MessageBoxW.argtypes = [
         wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT
     ]
 
+    kernel32.GetUserDefaultUILanguage.restype = wintypes.LANGID
+    kernel32.GetUserDefaultUILanguage.argtypes = []
+    kernel32.GetUserDefaultLocaleName.restype = ctypes.c_int
+    kernel32.GetUserDefaultLocaleName.argtypes = [wintypes.LPWSTR, ctypes.c_int]
     kernel32.SetLastError.restype = None
     kernel32.SetLastError.argtypes = [wintypes.DWORD]
     kernel32.GetLastError.restype = wintypes.DWORD
@@ -533,14 +533,14 @@ class SerialKeyboardEmulator:
 
     def _detect_windows_language(self):
         """Windows のユーザーロケールを4つの対応言語へ変換する。"""
-        language_id = user32.GetUserDefaultUILanguage()
+        language_id = kernel32.GetUserDefaultUILanguage()
         if language_id:
             return language_from_windows_lang_id(language_id)
 
         locale_buffer = ctypes.create_unicode_buffer(85)
-        if user32.GetUserDefaultLocaleName(locale_buffer, len(locale_buffer)):
+        if kernel32.GetUserDefaultLocaleName(locale_buffer, len(locale_buffer)):
             return language_from_locale(locale_buffer.value)
-        self.logger.warning("Windows の表示言語を取得できなかったため英語を使用します")
+        self.logger.warning("Unable to detect the Windows display language; using English.")
         return language_from_locale(None)
 
     def _get_language(self):

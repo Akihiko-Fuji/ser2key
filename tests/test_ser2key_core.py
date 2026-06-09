@@ -1,4 +1,5 @@
 import math
+import os
 import unittest
 from datetime import datetime
 
@@ -7,6 +8,7 @@ from ser2key_core import (
     create_config_parser,
     decode_output_template,
     render_output_template,
+    resolve_program_directory,
     validate_serial_config,
     validate_settings_config,
 )
@@ -17,6 +19,25 @@ from ser2key_i18n import (
     parity_label,
     translate,
 )
+
+
+class ProgramDirectoryTests(unittest.TestCase):
+    def test_uses_launched_executable_path_for_external_config(self):
+        executable = os.path.join(os.sep, 'portable', 'ser2key', 'ser2key.exe')
+        extracted_module = os.path.join(os.sep, 'temp', 'onefile_27360', 'ser2key.py')
+
+        self.assertEqual(
+            resolve_program_directory(executable, extracted_module),
+            os.path.dirname(os.path.abspath(executable)),
+        )
+
+    def test_falls_back_to_module_path_when_argv_is_empty(self):
+        module_file = os.path.join(os.sep, 'src', 'ser2key.py')
+
+        self.assertEqual(
+            resolve_program_directory('', module_file),
+            os.path.dirname(os.path.abspath(module_file)),
+        )
 
 
 class LocalizationTests(unittest.TestCase):

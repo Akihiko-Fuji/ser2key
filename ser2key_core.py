@@ -6,6 +6,7 @@ import codecs
 from collections.abc import Callable, Mapping, MutableMapping
 import configparser
 import math
+import os
 from datetime import datetime
 import re
 from typing import Final, Optional
@@ -25,6 +26,14 @@ ENCODING_OPTIONS: Final[tuple[str, ...]] = (
 MAX_BUFFER_MSEC: Final = 60_000
 
 DATETIME_TOKEN_PATTERN = re.compile(r'\{(DATE|TIME|DATETIME)(?::([^}]*))?\}')
+
+
+def resolve_program_directory(argv0: str, module_file: str) -> str:
+    """Return the directory containing the launched program or executable."""
+    program_path = argv0 or module_file
+    return os.path.dirname(os.path.abspath(program_path))
+
+
 ESCAPE_SEQUENCE_PATTERN = re.compile(
     r"\\(?:[\\abfnrtv]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})"
 )

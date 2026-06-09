@@ -48,6 +48,7 @@ from ser2key_core import (
     create_config_parser,
     decode_output_template,
     render_output_template,
+    resolve_program_directory,
     validate_serial_config as validate_serial_values,
     validate_settings_config as validate_settings_values,
 )
@@ -77,38 +78,10 @@ ENCODING_LABELS: dict[str, str] = {
 }
 
 
-def _get_nuitka_onefile_dirs():
-    """Nuitka のワンファイル実行時に設定されるパス情報を取得"""
-    dirs = []
-    # 解凍先ディレクトリ（同梱データはここに展開される）
-    temp_dir = os.environ.get('NUITKA_ONEFILE_TEMP')
-    if temp_dir:
-        dirs.append(os.path.abspath(temp_dir))
-
-    # 元の実行ファイルが存在するディレクトリ（config.ini をここに置く想定）
-    parent_dir = os.environ.get('NUITKA_ONEFILE_PARENT')
-    if parent_dir:
-        dirs.append(os.path.abspath(parent_dir))
-
-    return dirs
-
-
 def _get_executable_directory():
-    """Nuitka Onefile の場合は、元の実行ファイルの配置場所を最優先で返す"""
-    nuitka_dirs = _get_nuitka_onefile_dirs()
-    if nuitka_dirs:
-        return nuitka_dirs[-1]
-
-    # 起動時のコマンドラインに含まれるパス（実行ファイルが置かれているディレクトリ）
-    argv_dir = os.path.dirname(os.path.abspath(sys.argv[0])) if sys.argv else ''
-
-    # frozen 実行時は sys.executable が展開先を指すことがあるため argv ベースを優先
-    if getattr(sys, 'frozen', False):
-        if argv_dir:
-            return argv_dir
-        return os.path.dirname(os.path.abspath(sys.executable))
-
-    return argv_dir or os.path.dirname(os.path.abspath(__file__))
+    """実行ファイルが配置されているディレクトリを返す"""
+    argv0 = sys.argv[0] if sys.argv else ''
+    return resolve_program_directory(argv0, __file__)
 
 
 def _get_storage_directory():
@@ -1589,13 +1562,13 @@ class TrayIconManager:
                 os.path.join(sys._MEIPASS, icon_file) for icon_file in ICON_FILES
             )
 
-        # Nuitka Onefile で解凍されたデータパスを優先的に参照
-        for onefile_dir in _get_nuitka_onefile_dirs():
-            candidate_paths.extend(
-                os.path.join(onefile_dir, icon_file) for icon_file in ICON_FILES
-            )
+        # Nuitka Onefile の同梱データは __file__ と同じ展開先に置かれる
+        bundled_data_dir = os.path.dirname(os.path.abspath(__file__))
+        candidate_paths.extend(
+            os.path.join(bundled_data_dir, icon_file) for icon_file in ICON_FILES
+        )
 
-        # 実行ファイルと同じ場所に展開されたデータファイルを優先的に参照
+        # 実行ファイルと同じ場所にある外部データファイルも参照
         candidate_paths.extend(
             os.path.join(APP_DIR, icon_file) for icon_file in ICON_FILES
         )

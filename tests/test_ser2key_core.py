@@ -9,6 +9,63 @@ from ser2key_core import (
     validate_serial_config,
     validate_settings_config,
 )
+from ser2key_i18n import (
+    LANGUAGE_OPTIONS,
+    language_from_locale,
+    language_from_windows_lang_id,
+    parity_label,
+    translate,
+)
+
+
+class LocalizationTests(unittest.TestCase):
+    def test_maps_supported_windows_locales(self):
+        expected = {
+            'ja-JP': 'ja',
+            'en-US': 'en',
+            'ko-KR': 'ko',
+            'zh-CN': 'zh',
+            'zh-TW': 'zh',
+        }
+        for locale_name, language in expected.items():
+            with self.subTest(locale_name=locale_name):
+                self.assertEqual(language_from_locale(locale_name), language)
+
+    def test_unsupported_or_missing_locale_falls_back_to_english(self):
+        self.assertEqual(language_from_locale('fr-FR'), 'en')
+        self.assertEqual(language_from_locale(None), 'en')
+
+    def test_maps_windows_ui_language_ids(self):
+        expected = {
+            0x0411: 'ja',
+            0x0409: 'en',
+            0x0412: 'ko',
+            0x0804: 'zh',
+            0x040C: 'en',
+        }
+        for lang_id, language in expected.items():
+            with self.subTest(lang_id=lang_id):
+                self.assertEqual(language_from_windows_lang_id(lang_id), language)
+
+    def test_every_language_has_translated_parity_names(self):
+        expected_japanese = {
+            'N': 'なし',
+            'E': '偶数',
+            'O': '奇数',
+            'M': 'マーク',
+            'S': 'スペース',
+        }
+        for parity, label in expected_japanese.items():
+            self.assertEqual(parity_label('ja', parity), label)
+        for language in LANGUAGE_OPTIONS:
+            for parity in ('N', 'E', 'O', 'M', 'S'):
+                with self.subTest(language=language, parity=parity):
+                    self.assertNotEqual(parity_label(language, parity), parity)
+
+    def test_translates_dynamic_menu_labels(self):
+        self.assertEqual(translate('en', 'connect', port='COM7'), 'Connect: COM7')
+        self.assertEqual(translate('ko', 'exit'), '종료')
+        self.assertEqual(translate('zh', 'language'), '语言')
 
 
 class OutputTemplateTests(unittest.TestCase):
@@ -63,6 +120,7 @@ class ConfigurationValidationTests(unittest.TestCase):
             'add_enter': True,
             'encoding': 'shift_jis',
             'buffer_msec': 0,
+            'language': 'ja',
         }
 
     def test_accepts_default_configuration(self):
@@ -105,6 +163,7 @@ class ConfigurationValidationTests(unittest.TestCase):
             ('buffer_msec', -1),
             ('buffer_msec', 60_001),
             ('add_enter', 'yes'),
+            ('language', 'fr'),
         ):
             with self.subTest(key=key, value=value):
                 config = dict(self.settings_config)

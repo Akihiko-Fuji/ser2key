@@ -29,6 +29,9 @@
 などが指定できます。  
 これらの設定は実行中にもシステムトレイメニューから変更可能で、変更内容は `config.ini` に保存され、次回起動時に反映されます。
 
+### 表示言語
+タスクトレイメニューは日本語、英語、韓国語、中国語に対応しています。`[settings]` の `language` には `ja`、`en`、`ko`、`zh` のいずれかを指定してください。`language` が存在しない初回起動時は Windows のユーザー言語を判定し、対応する言語を `config.ini` に保存します。以後は保存された言語を使用し、タスクトレイの「言語」メニューからいつでも変更できます。パリティ設定も、選択中の表示言語に合わせて「なし／偶数／奇数／マーク／スペース」などの一般向け名称で表示されます。
+
 ### 受信データの整形（ヘッダー・フッター）
 `config.ini` の `[output]` セクションを使うと、受信したシリアルデータの前後に任意の文字列を追加できます。  
 `header` はデータの前、`footer` は後に付加され、装置のファームウェアを変更せずに接頭辞・接尾辞や改行などを柔軟に追加可能です。
@@ -92,7 +95,7 @@ py -m pip install -r requirements.txt
 py ser2key.py
 ```
 
-初回起動時に設定ファイルが存在しない場合は、自動的に `config.ini` を作成します。ログは `%APPDATA%\ser2key\ser2key.log` に保存され、最大 512 KiB × 4 世代でローテーションされます。受信内容はログへ記録されるため、個人情報や機密情報を扱う場合はログファイルの保管・アクセス権限に注意してください。
+初回起動時に実行ファイルと同じフォルダーに設定ファイルが存在しない場合は、その場所にだけ `config.ini` を作成します。ログは `%APPDATA%\ser2key\ser2key.log` に保存され、最大 512 KiB × 4 世代でローテーションされます。受信内容はログへ記録されるため、個人情報や機密情報を扱う場合はログファイルの保管・アクセス権限に注意してください。
 
 ## 開発・リリース確認
 
@@ -100,9 +103,9 @@ py ser2key.py
 
 ```bash
 python -m pip install -e ".[dev]"
-ruff check ser2key.py ser2key_core.py tests
+ruff check ser2key.py ser2key_core.py ser2key_i18n.py tests
 python -m unittest discover -s tests -v
-python -m compileall -q ser2key.py ser2key_core.py tests
+python -m compileall -q ser2key.py ser2key_core.py ser2key_i18n.py tests
 python -m build
 python -m twine check dist/*
 ```
@@ -110,6 +113,9 @@ python -m twine check dist/*
 Windows 上では、実機または仮想 COM ポートを使用して、接続・再接続、トレイメニュー、Unicode 貼り付け、クリップボード復元、終了処理も確認してください。
 
 ### 更新履歴
+1.7.3
+タスクトレイの日本語・英語・韓国語・中国語対応、パリティ表示のローカライズ、Windows表示言語の初回自動判定、および実行ファイルと同じ階層への `config.ini` 保存に対応しました。WindowsロケールAPIの参照先とPython 3.9互換性も修正しました。
+
 1.7.2
 64-bit Windows で Win32 ハンドルが切り詰められる問題を修正し、クリップボード、アイコン、多重起動防止、OLE 初期化のエラー処理を強化しました。
 
@@ -145,4 +151,4 @@ Windows に特化し、使用するライブラリを見直すことで実行フ
 
 Windows x64 実行ファイルと設定ファイルを含む最新版は、[GitHub Releases](https://github.com/Akihiko-Fuji/ser2key/releases/latest) から `ser2key-windows-x64.zip` をダウンロードしてください。
 
-バージョンタグ（例: `v1.7.2`）を push すると、GitHub Actions がテスト済みの Windows 実行ファイルをビルドし、Release に添付します。手動実行時は Actions の成果物として同じ ZIP を取得できます。
+バージョンタグ（例: `v1.7.3`）を push すると、GitHub Actions がテスト済みの Windows 実行ファイルをビルドし、Release に添付します。手動実行時は Actions の成果物として同じ ZIP を取得できます。

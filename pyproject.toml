@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ser2key"
-version = "1.7.2"
+version = "1.7.3"
 description = "Convert Windows serial input into keyboard paste events"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -33,4 +33,4 @@ dev = [
 ser2key = "ser2key:main"
 
 [tool.setuptools]
-py-modules = ["ser2key", "ser2key_core"]
+py-modules = ["ser2key", "ser2key_core", "ser2key_i18n"]
